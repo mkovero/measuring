@@ -16,6 +16,7 @@ DEFAULTS = {
     "output_channel": 0,
     "input_channel":  0,
     "dbu_ref_vrms":   DBU_REF_EXACT,
+    "dmm_host":       None,
 }
 
 
@@ -48,4 +49,6 @@ def show(cfg):
     print(f"  Output channel: {cfg['output_channel']}")
     print(f"  Input channel:  {cfg['input_channel']}")
     print(f"  dBu reference: {ref*1000:.4f} mVrms  ({ref:.8f} V)")
+    dmm = cfg.get("dmm_host")
+    print(f"  DMM host:      {dmm if dmm else '(not configured)'}")
     print()

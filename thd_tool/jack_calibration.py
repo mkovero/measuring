@@ -152,11 +152,37 @@ class Calibration:
 # DMM input helper
 # ---------------------------------------------------------------------------
 
-def _parse_dmm(prompt):
+def _try_dmm_read(dmm_host):
+    """Try to read AC Vrms from the configured DMM. Returns float or None."""
+    try:
+        from . import dmm as _dmm
+        vrms = _dmm.read_ac_vrms(dmm_host)
+        return vrms
+    except Exception as e:
+        print(f"  DMM read failed: {e}")
+        return None
+
+
+def _parse_dmm(prompt, dmm_host=None):
+    suggestion = None
+    if dmm_host:
+        print(f"  Reading DMM ({dmm_host})...", end=" ", flush=True)
+        suggestion = _try_dmm_read(dmm_host)
+        if suggestion is not None:
+            print(f"{fmt_vrms(suggestion)}  =  {vrms_to_dbu(suggestion):+.2f} dBu")
+        else:
+            print("(failed)")
+
     while True:
-        raw = input(prompt).strip().lower().replace(" ", "")
-        if not raw:
-            return None
+        if suggestion is not None:
+            hint = f"{suggestion*1000:.4f} mVrms"
+            raw  = input(f"  Enter to accept DMM reading ({hint}), or type override: ").strip().lower().replace(" ", "")
+            if not raw:
+                return suggestion
+        else:
+            raw = input(prompt).strip().lower().replace(" ", "")
+            if not raw:
+                return None
         try:
             if raw.endswith("mv") or raw.endswith("m"):
                 return float(raw.rstrip("mv").rstrip("m")) / 1000.0
@@ -165,7 +191,7 @@ def _parse_dmm(prompt):
             else:
                 return float(raw)
         except ValueError:
-            print("  Try:  0.245  or  245mV  or  245m  -- press Enter to skip")
+            print("  Try:  0.245  or  245mV  or  245m  -- press Enter to skip/accept")
 
 
 # ---------------------------------------------------------------------------
@@ -173,7 +199,7 @@ def _parse_dmm(prompt):
 # ---------------------------------------------------------------------------
 
 def run_calibration_jack(output_channel=0, input_channel=0,
-                         ref_dbfs=-10.0, freq=1000):
+                         ref_dbfs=-10.0, freq=1000, dmm_host=None):
     from .signal import make_sine
     from .constants import SAMPLERATE
 
@@ -200,7 +226,7 @@ def run_calibration_jack(output_channel=0, input_channel=0,
     engine.start(output_ports=out_port, input_port=in_port)
 
     try:
-        vrms_out = _parse_dmm("  DMM reading at output (e.g. 245mV or 0.245): ")
+        vrms_out = _parse_dmm("  DMM reading at output (e.g. 245mV or 0.245): ", dmm_host=dmm_host)
     finally:
         engine.set_silence()
 

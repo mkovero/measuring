@@ -139,12 +139,34 @@ def cmd_setup(cmd, cfg):
     if "output"       in cmd: update["output_channel"] = cmd["output"]
     if "input"        in cmd: update["input_channel"]  = cmd["input"]
     if "dbu_ref_vrms" in cmd: update["dbu_ref_vrms"]   = cmd["dbu_ref_vrms"]
+    if "dmm_host"     in cmd: update["dmm_host"]       = cmd["dmm_host"]
     if not update:
         show_config(cfg)
         return
     new_cfg = save_config(update)
     show_config(new_cfg)
     print("  Saved.")
+
+
+def cmd_dmm_show(_cmd, cfg):
+    from . import dmm as _dmm
+    host = cfg.get("dmm_host")
+    if not host:
+        print("\n  error: no DMM configured — run:  ac setup dmm <host>\n")
+        sys.exit(1)
+    print(f"\n  Connecting to DMM at {host}...")
+    try:
+        idn = _dmm.identify(host)
+        print(f"  {idn}")
+    except Exception as e:
+        print(f"  (identify failed: {e})")
+    try:
+        vrms = _dmm.read_ac_vrms(host)
+        from .conversions import fmt_vrms, fmt_vpp
+        print(f"\n  AC  {fmt_vrms(vrms)}  =  {vrms_to_dbu(vrms):+.2f} dBu  =  {fmt_vpp(vrms)}\n")
+    except Exception as e:
+        print(f"\n  error reading DMM: {e}\n")
+        sys.exit(1)
 
 
 def cmd_calibrate_show(_cmd, _cfg):
@@ -191,6 +213,7 @@ def cmd_calibrate(cmd, cfg):
         input_channel  = in_ch,
         ref_dbfs       = ref_dbfs,
         freq           = freq,
+        dmm_host       = cfg.get("dmm_host"),
     )
 
 
@@ -347,6 +370,7 @@ def cmd_monitor_level(cmd, cfg):
 HANDLERS = {
     "devices":          cmd_devices,
     "setup":            cmd_setup,
+    "dmm_show":         cmd_dmm_show,
     "calibrate":        cmd_calibrate,
     "calibrate_show":   cmd_calibrate_show,
     "sweep_level":      cmd_sweep_level,

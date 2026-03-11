@@ -160,6 +160,8 @@ ABBREVS = {
     "sh": "show",
     # calibrate show
     "ls": "list",
+    # dmm
+    "dmm": "dmm",
     # setup / devices
     "se": "setup", "set": "setup",
     "d": "devices", "dev": "devices", "devs": "devices",
@@ -333,6 +335,10 @@ def parse(argv):
         result["level"] = level or ("dbfs", -10.0)
         return result
 
+    elif verb == "dmm":
+        # ac dmm [show]  -- read AC Vrms from configured DMM
+        return {"cmd": "dmm_show"}
+
     elif verb == "devices":
         return {"cmd": "devices"}
 
@@ -359,8 +365,10 @@ def parse(argv):
                     result["dbu_ref_vrms"] = ref
                 except ValueError:
                     raise ParseError(f"setup dburef: expected voltage e.g. 775mv or 0.775v, got {val!r}")
+            elif key == "dmm":
+                result["dmm_host"] = val
             else:
-                raise ParseError(f"setup: unknown key {key!r}  (output | input | device | dburef)")
+                raise ParseError(f"setup: unknown key {key!r}  (output | input | device | dburef | dmm)")
         return result
 
     else:
@@ -416,10 +424,12 @@ Examples:
   ac calibrate 1khz
   ac calibrate output 1 input 2 1khz
   ac cal out 1 in 2
+  ac dmm
 
   ac devices
   ac setup output 11 input 0 device 0
   ac setup output 1   # change just one value
+  ac setup dmm 172.19.92.100
 """
 
 
