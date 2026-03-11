@@ -284,7 +284,28 @@ def jack_monitor_spectrum(cfg, freq, level_dbfs, cal=None, interval=1.0):
     title_obj = ax.set_title(f"  {freq:.0f} Hz  |  capturing...", color=_TITLE)
     # Fixed margins — tight_layout shifts when title length changes
     fig.subplots_adjust(left=0.07, right=0.98, top=0.88, bottom=0.12)
-    plt.pause(0.001)
+
+    # Blit setup: hide dynamic artists, draw static background, restore artists
+    line.set_visible(False)
+    title_obj.set_visible(False)
+    for vl in vlines:
+        vl.set_visible(False)
+    fig.canvas.draw()
+    _bg = fig.canvas.copy_from_bbox(fig.bbox)
+    line.set_visible(True)
+    title_obj.set_visible(True)
+    for vl in vlines:
+        vl.set_visible(True)
+    fig.canvas.flush_events()
+
+    def _blit():
+        fig.canvas.restore_region(_bg)
+        ax.draw_artist(line)
+        for vl in vlines:
+            ax.draw_artist(vl)
+        ax.draw_artist(title_obj)
+        fig.canvas.blit(fig.bbox)
+        fig.canvas.flush_events()
 
     print(f"  {freq:.0f} Hz  |  {level_dbfs:.1f} dBFS  |  Ctrl+C to stop\n")
 
@@ -296,8 +317,7 @@ def jack_monitor_spectrum(cfg, freq, level_dbfs, cal=None, interval=1.0):
 
             if "error" in r:
                 title_obj.set_text(f"  {freq:.0f} Hz  |  {r['error']}")
-                fig.canvas.draw()
-                fig.canvas.flush_events()
+                _blit()
                 continue
 
             spec_full  = r["spectrum"][1:]
@@ -326,8 +346,7 @@ def jack_monitor_spectrum(cfg, freq, level_dbfs, cal=None, interval=1.0):
                 f"{freq:.0f} Hz{in_dbu_s}  |  "
                 f"THD: {r['thd_pct']:.4f}%  |  THD+N: {r['thdn_pct']:.4f}%{clip_s}"
             )
-            fig.canvas.draw()
-            fig.canvas.flush_events()
+            _blit()
 
     except KeyboardInterrupt:
         pass

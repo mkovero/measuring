@@ -310,6 +310,24 @@ def cmd_generate_sine(cmd, cfg):
         print("\n  Stopped.")
 
 
+def cmd_server(cmd, cfg):
+    _require_jack()
+    from .server import run_server, DEFAULT_PORT
+    freq     = cmd["freq"]
+    cal      = _load_cal(cfg, freq)
+    level_db = _level_to_dbfs(cmd["level"], cal)
+    _print_ports(cfg)
+    run_server(cfg, freq, level_db, cal=cal,
+               interval=cmd["interval"],
+               zmq_port=cfg.get("zmq_port", DEFAULT_PORT))
+
+
+def cmd_remote(cmd, cfg):
+    from .remote import run_remote
+    from .server import DEFAULT_PORT
+    run_remote(cmd["host"], zmq_port=cfg.get("zmq_port", DEFAULT_PORT))
+
+
 def cmd_monitor_level(cmd, cfg):
     _require_jack()
     from .conversions import fmt_vrms
@@ -379,6 +397,8 @@ HANDLERS = {
     "monitor_level":    cmd_monitor_level,
     "monitor_spectrum": cmd_monitor_spectrum,
     "generate_sine":    cmd_generate_sine,
+    "server":           cmd_server,
+    "remote":           cmd_remote,
 }
 
 

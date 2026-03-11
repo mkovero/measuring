@@ -371,6 +371,23 @@ def parse(argv):
                 raise ParseError(f"setup: unknown key {key!r}  (output | input | device | dburef | dmm)")
         return result
 
+    elif verb == "server":
+        tokens   = _classify_all(args)
+        freq     = _pull(tokens, "freq",  optional=True) or 1000.0
+        level    = _pull(tokens, "level", optional=True) or ("dbfs", -12.0)
+        interval = _pull(tokens, "time",  optional=True) or 0.2
+        if tokens:
+            raise ParseError(f"unexpected token(s): {tokens}")
+        return {"cmd": "server", "freq": freq, "level": level, "interval": interval}
+
+    elif verb == "remote":
+        if not args:
+            raise ParseError("remote needs a host: ac remote 1.2.3.4")
+        host = args.pop(0)
+        if args:
+            raise ParseError(f"unexpected token(s) after host: {args}")
+        return {"cmd": "remote", "host": host}
+
     else:
         raise ParseError(f"unknown command: {verb!r}  (sweep | monitor | generate | calibrate | setup | devices)")
 
