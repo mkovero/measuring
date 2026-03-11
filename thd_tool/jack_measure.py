@@ -240,17 +240,6 @@ def jack_monitor(cfg, freq, level_dbfs, cal=None, interval=1.0,
 def jack_monitor_spectrum(cfg, freq, level_dbfs, cal=None, interval=1.0):
     import matplotlib.pyplot as plt
 
-    # plotting.py sets Agg; switch to an interactive backend for this window
-    for _backend in ("TkAgg", "Qt5Agg", "GTK3Agg", "Qt4Agg"):
-        try:
-            plt.switch_backend(_backend)
-            break
-        except Exception:
-            continue
-    else:
-        print("  error: no interactive matplotlib backend available (tried TkAgg, Qt5Agg, GTK3Agg)")
-        return
-
     _BG     = "#0e1117"
     _PANEL  = "#161b22"
     _GRID   = "#222222"
