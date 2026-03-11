@@ -8,7 +8,7 @@ from .parse            import parse, ParseError, USAGE
 from .config           import load as load_config, save as save_config, show as show_config
 from .jack_calibration import run_calibration_jack
 from .jack_calibration import Calibration
-from .jack_measure     import jack_sweep_level, jack_sweep_frequency, jack_monitor
+from .jack_measure     import jack_sweep_level, jack_sweep_frequency, jack_monitor, jack_monitor_spectrum
 from .audio            import find_ports, port_name, JackEngine
 from .io               import save_csv, print_summary
 from .plotting         import plot_results
@@ -57,20 +57,22 @@ def _level_to_vrms(level, cal):
 
 
 def _level_to_dbfs(level, cal):
-    from .conversions import get_dbu_ref
     if isinstance(level, tuple):
         kind, val = level
         if kind == "dbfs":
             return val
         if kind == "dbu":
+            if not (cal and cal.output_ok):
+                print("  error: dBu levels require output calibration — run:  ac calibrate")
+                sys.exit(1)
             vrms = _level_to_vrms(level, cal)
-            if cal and cal.output_ok:
-                return 20.0 * math.log10(vrms / cal.vrms_at_0dbfs_out)
-            return 20.0 * math.log10(vrms / get_dbu_ref()) - 13.0
+            return 20.0 * math.log10(vrms / cal.vrms_at_0dbfs_out)
+    # Vrms
+    if not (cal and cal.output_ok):
+        print("  error: Vrms levels require output calibration — run:  ac calibrate")
+        sys.exit(1)
     vrms = float(level)
-    if cal and cal.output_ok:
-        return max(-60.0, min(-0.5, 20.0 * math.log10(vrms / cal.vrms_at_0dbfs_out)))
-    return max(-60.0, 20.0 * math.log10(vrms / get_dbu_ref()) - 13.0)
+    return max(-60.0, min(-0.5, 20.0 * math.log10(vrms / cal.vrms_at_0dbfs_out)))
 
 
 def _print_ports(cfg):
@@ -148,19 +150,24 @@ def cmd_setup(cmd, cfg):
 
 def cmd_calibrate(cmd, cfg):
     _require_jack()
-    freq  = cmd["freq"]
-    level = cmd["level"]
+    freq   = cmd["freq"]
+    level  = cmd["level"]
+    out_ch = cmd.get("output_channel", cfg["output_channel"])
+    in_ch  = cmd.get("input_channel",  cfg["input_channel"])
+
     if isinstance(level, tuple) and level[0] == "dbfs":
         ref_dbfs = level[1]
     else:
-        cal      = Calibration.load(output_channel=cfg["output_channel"],
-                                    input_channel=cfg["input_channel"], freq=freq)
+        cal      = Calibration.load(output_channel=out_ch, input_channel=in_ch, freq=freq)
         ref_dbfs = _level_to_dbfs(level, cal) if cal else -10.0
 
-    _print_ports(cfg)
+    # Show which ports will be used (may differ from configured default)
+    playback, capture = find_ports()
+    print(f"  Output: ch {out_ch}  ({port_name(playback, out_ch)})")
+    print(f"  Input:  ch {in_ch}  ({port_name(capture, in_ch)})")
     run_calibration_jack(
-        output_channel = cfg["output_channel"],
-        input_channel  = cfg["input_channel"],
+        output_channel = out_ch,
+        input_channel  = in_ch,
         ref_dbfs       = ref_dbfs,
         freq           = freq,
     )
@@ -202,6 +209,15 @@ def cmd_monitor_thd(cmd, cfg):
     level_db = _level_to_dbfs(cmd["level"], cal)
     _print_ports(cfg)
     jack_monitor(cfg, freq, level_db, cal=cal, interval=cmd["interval"])
+
+
+def cmd_monitor_spectrum(cmd, cfg):
+    _require_jack()
+    freq     = cmd["freq"]
+    cal      = _load_cal(cfg, freq)
+    level_db = _level_to_dbfs(cmd["level"], cal)
+    _print_ports(cfg)
+    jack_monitor_spectrum(cfg, freq, level_db, cal=cal, interval=cmd["interval"])
 
 
 def cmd_generate_sine(cmd, cfg):
@@ -317,7 +333,7 @@ HANDLERS = {
     "sweep_frequency":  cmd_sweep_frequency,
     "monitor_thd":      cmd_monitor_thd,
     "monitor_level":    cmd_monitor_level,
-    "monitor_spectrum": cmd_monitor_thd,   # TODO
+    "monitor_spectrum": cmd_monitor_spectrum,
     "generate_sine":    cmd_generate_sine,
 }
 

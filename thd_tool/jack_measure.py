@@ -1,39 +1,24 @@
 # jack_measure.py  -- measurement functions using JackEngine
 # Drop-in replacements for the sounddevice-based sweep.py / live.py functions.
 
-import time
 import numpy as np
-from .audio     import JackEngine, find_ports, port_name
-from .analysis  import analyze
-from .signal    import make_sine
+from .audio       import JackEngine, find_ports, port_name
+from .analysis    import analyze
 from .conversions import vrms_to_dbu, fmt_vrms
-def _warmup(engine, n_blocks=4):
-    """Let the output settle for n_blocks of audio."""
+from .constants   import WARMUP_REPS
+
+
+def _warmup(engine, n_blocks=WARMUP_REPS):
     dur = engine.blocksize / engine.samplerate * n_blocks
     engine.capture_block(dur)
 
 
-def _measure_one(engine, freq, duration=1.0, cal=None):
-    """Capture one block and return analysis result dict."""
-    data = engine.capture_block(duration)
-    rec  = data.reshape(-1, 1)   # analyze() wants (frames, channels)
-    r    = analyze(rec, sr=engine.samplerate, fundamental=freq)
-    if "error" in r:
-        return r
-    r["out_vrms"] = cal.out_vrms(20 * np.log10(engine._tone_pos and 1 or 1)) if cal else None
-    # Use cal to convert linear_rms -> physical Vrms
-    r["in_vrms"]  = cal.in_vrms(r["linear_rms"]) if (cal and cal.input_ok) else None
-    r["in_dbu"]   = vrms_to_dbu(r["in_vrms"])    if r["in_vrms"] else None
-    return r
-
-
 def _engine_from_cfg(cfg):
-    """Create and connect a JackEngine from a config dict."""
     playback, capture = find_ports()
     out_port = port_name(playback, cfg["output_channel"])
     in_port  = port_name(capture,  cfg["input_channel"])
     engine   = JackEngine()
-    engine.start(output_port=out_port, input_port=in_port)
+    engine.start(output_ports=out_port, input_port=in_port)
     return engine, out_port, in_port
 
 
@@ -245,4 +230,111 @@ def jack_monitor(cfg, freq, level_dbfs, cal=None, interval=1.0,
     except KeyboardInterrupt:
         engine.set_silence()
         engine.stop()
+        print("\n\n  Stopped.")
+
+
+# ------------------------------------------------------------------
+# Spectrum monitor
+# ------------------------------------------------------------------
+
+def jack_monitor_spectrum(cfg, freq, level_dbfs, cal=None, interval=1.0):
+    import matplotlib.pyplot as plt
+
+    # plotting.py sets Agg; switch to an interactive backend for this window
+    for _backend in ("TkAgg", "Qt5Agg", "GTK3Agg", "Qt4Agg"):
+        try:
+            plt.switch_backend(_backend)
+            break
+        except Exception:
+            continue
+    else:
+        print("  error: no interactive matplotlib backend available (tried TkAgg, Qt5Agg, GTK3Agg)")
+        return
+
+    _BG     = "#0e1117"
+    _PANEL  = "#161b22"
+    _GRID   = "#222222"
+    _TEXT   = "#aaaaaa"
+    _TITLE  = "#dddddd"
+    _SPINE  = "#333333"
+    _BLUE   = "#4a9eff"
+    _RED    = "#e74c3c"
+
+    amplitude = 10.0 ** (level_dbfs / 20.0)
+    engine, _, _ = _engine_from_cfg(cfg)
+    engine.set_tone(freq, amplitude)
+    duration = max(1.0, interval)
+
+    plt.ion()
+    fig, ax = plt.subplots(figsize=(13, 5), facecolor=_BG)
+    try:
+        fig.canvas.manager.set_window_title("ac — spectrum monitor")
+    except Exception:
+        pass
+    ax.set_facecolor(_PANEL)
+    ax.set_xscale("log")
+    ax.set_xlim(20, engine.samplerate / 2)
+    ax.set_ylim(-140, 10)
+    ax.set_xlabel("Frequency (Hz)", color=_TEXT)
+    ax.set_ylabel("Level (dBFS)", color=_TEXT)
+    ax.tick_params(colors=_TEXT)
+    ax.grid(True, color=_GRID, linestyle="--", alpha=0.5)
+    for sp in ax.spines.values():
+        sp.set_edgecolor(_SPINE)
+
+    sr = engine.samplerate
+    (line,) = ax.plot([20, sr / 2], [-140, -140], color=_BLUE, linewidth=0.8)
+
+    vlines = []
+    for i in range(10):
+        hf = freq * (i + 1)
+        if hf >= sr / 2:
+            break
+        vlines.append(ax.axvline(hf, color=_RED, linestyle="--", linewidth=0.7, alpha=0.5))
+
+    title_obj = ax.set_title("", color=_TITLE)
+    plt.tight_layout()
+    fig.canvas.draw()
+    fig.canvas.flush_events()
+
+    print(f"  {freq:.0f} Hz  |  {level_dbfs:.1f} dBFS  |  Ctrl+C to stop\n")
+
+    try:
+        while plt.fignum_exists(fig.number):
+            data = engine.capture_block(duration)
+            rec  = data.reshape(-1, 1)
+            r    = analyze(rec, sr=sr, fundamental=freq)
+
+            if "error" in r:
+                print(f"  !! {r['error']}", end="\r")
+                plt.pause(0.05)
+                continue
+
+            spec_db = 20.0 * np.log10(np.maximum(r["spectrum"], 1e-12))
+            line.set_xdata(r["freqs"])
+            line.set_ydata(spec_db)
+
+            # Re-pin harmonic vlines to the actual measured fundamental bin
+            f1_real = r["freqs"][int(np.argmax(r["spectrum"]))]
+            for i, vl in enumerate(vlines):
+                vl.set_xdata([f1_real * (i + 1)])
+
+            in_dbu_s = ""
+            if cal and cal.input_ok:
+                in_dbu_s = f"  |  {vrms_to_dbu(cal.in_vrms(r['linear_rms'])):+.2f} dBu"
+
+            clip_s = "  [CLIP]" if r.get("clipping") else ""
+            title_obj.set_text(
+                f"{freq:.0f} Hz{in_dbu_s}  |  "
+                f"THD: {r['thd_pct']:.4f}%  |  THD+N: {r['thdn_pct']:.4f}%{clip_s}"
+            )
+            fig.canvas.draw()
+            fig.canvas.flush_events()
+
+    except KeyboardInterrupt:
+        pass
+    finally:
+        engine.set_silence()
+        engine.stop()
+        plt.close(fig)
         print("\n\n  Stopped.")

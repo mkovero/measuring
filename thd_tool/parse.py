@@ -303,15 +303,29 @@ def parse(argv):
             raise ParseError(f"unknown generate noun: {noun!r}  (sine)")
 
     elif verb == "calibrate":
-        tokens = _classify_all(args)
+        # Optional channel overrides: ac calibrate [output N] [input N] [freq] [level]
+        result    = {"cmd": "calibrate", "show_plot": show_plot}
+        remaining = list(args)
+        clean     = []
+        while remaining:
+            key = _expand(remaining[0])
+            if key in ("output", "input") and len(remaining) > 1:
+                remaining.pop(0)
+                val = remaining.pop(0)
+                try:
+                    result["output_channel" if key == "output" else "input_channel"] = int(val)
+                except ValueError:
+                    raise ParseError(f"calibrate: {key!r} value must be an integer, got {val!r}")
+            else:
+                clean.append(remaining.pop(0))
+        tokens = _classify_all(clean)
         freq  = _pull(tokens, "freq",  optional=True)
         level = _pull(tokens, "level", optional=True)
         if tokens:
             raise ParseError(f"unexpected token(s): {tokens}")
-        return {"cmd": "calibrate",
-                "freq":  freq  or 1000.0,
-                "level": level or ("dbfs", -10.0),
-                    "show_plot": show_plot}
+        result["freq"]  = freq  or 1000.0
+        result["level"] = level or ("dbfs", -10.0)
+        return result
 
     elif verb == "devices":
         return {"cmd": "devices"}
@@ -359,7 +373,7 @@ ac -- audio bench tool
   ac monitor thd   <level> <freq> [<interval>]
   ac monitor spectrum <level> <freq> [<interval>]
   ac generate sine <level> [<freq>]
-  ac calibrate     [<freq>] [<level>]
+  ac calibrate     [output N] [input N] [<freq>] [<level>]
 
 Units:
   frequency : 20hz  1khz  20000hz
@@ -372,6 +386,10 @@ Abbreviations:
   sweep->s  monitor->m  generate->g  calibrate->c
   level->l  frequency->f  thd->t  spectrum->sp  sine->si
 
+Notes:
+  dBu and Vrms levels require prior calibration (ac calibrate).
+  dBFS levels work without calibration.
+
 Examples:
   ac devices
   ac setup output 11 input 0 device 0
@@ -383,10 +401,13 @@ Examples:
   ac monitor thd 0dbu 1khz
   ac monitor thd 0dbu 1khz 0.2s
   ac m t 0dbu 1khz 0.2s
+  ac monitor spectrum 0dbu 1khz
+  ac m sp -12dbfs 1khz
   ac generate sine 0dbu 1khz
   ac g si 0dbu
   ac calibrate 1khz
-  ac calibrate
+  ac calibrate output 1 input 2 1khz
+  ac cal out 1 in 2
 
   ac devices
   ac setup output 11 input 0 device 0

@@ -24,7 +24,6 @@ class Calibration:
         self.vrms_at_0dbfs_out = None
         self.vrms_at_0dbfs_in  = None
         self.ref_dbfs          = -10.0
-        self.dmm_ratio         = 1.0
 
     @property
     def key(self):
@@ -46,10 +45,6 @@ class Calibration:
             return None
         return linear_rms * self.vrms_at_0dbfs_in
 
-    @property
-    def gain_correction(self):
-        return self.dmm_ratio
-
     def save(self, path=None):
         path = path or DEFAULT_CAL_PATH
         os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -68,7 +63,6 @@ class Calibration:
             "vrms_at_0dbfs_out": self.vrms_at_0dbfs_out,
             "vrms_at_0dbfs_in":  self.vrms_at_0dbfs_in,
             "ref_dbfs":          self.ref_dbfs,
-            "dmm_ratio":         self.dmm_ratio,
         }
         with open(path, "w") as f:
             json.dump(all_cals, f, indent=2)
@@ -91,7 +85,6 @@ class Calibration:
         cal.vrms_at_0dbfs_out = data.get("vrms_at_0dbfs_out")
         cal.vrms_at_0dbfs_in  = data.get("vrms_at_0dbfs_in")
         cal.ref_dbfs          = data.get("ref_dbfs", -10.0)
-        cal.dmm_ratio         = data.get("dmm_ratio", 1.0)
         return cal
 
     def summary(self):
@@ -111,10 +104,6 @@ class Calibration:
                   f"  =  {fmt_vpp(v)}")
         else:
             print("  Input:  not calibrated")
-        if self.output_ok and self.input_ok:
-            gc = self.gain_correction
-            print(f"  Gain correction: {gc:.4f}x"
-                  f"  ({20*math.log10(gc):+.2f} dB applied to input)")
         print("  --------------------------------------------------------------\n")
 
 
@@ -167,7 +156,7 @@ def run_calibration_jack(output_channel=0, input_channel=0,
 
     engine = JackEngine()
     engine.set_tone(freq, amplitude)
-    engine.start(output_port=out_port, input_port=in_port)
+    engine.start(output_ports=out_port, input_port=in_port)
 
     try:
         vrms_out = _parse_dmm("  DMM reading at output (e.g. 245mV or 0.245): ")
