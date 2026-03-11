@@ -309,8 +309,8 @@ def jack_monitor_spectrum(cfg, freq, level_dbfs, cal=None, interval=1.0):
                 plt.pause(0.05)
                 continue
 
-            spec_db = 20.0 * np.log10(np.maximum(r["spectrum"], 1e-12))
-            line.set_xdata(r["freqs"])
+            spec_db = 20.0 * np.log10(np.maximum(r["spectrum"][1:], 1e-12))
+            line.set_xdata(r["freqs"][1:])
             line.set_ydata(spec_db)
 
             # Re-pin harmonic vlines to the actual measured fundamental bin
