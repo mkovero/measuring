@@ -240,6 +240,14 @@ def jack_monitor(cfg, freq, level_dbfs, cal=None, interval=1.0,
 def jack_monitor_spectrum(cfg, freq, level_dbfs, cal=None, interval=1.0):
     import matplotlib.pyplot as plt
 
+    # Prefer TkAgg: works natively over X11 forwarding without EGL/DRI3
+    for _backend in ("TkAgg", "Qt5Agg", "GTK3Agg"):
+        try:
+            plt.switch_backend(_backend)
+            break
+        except Exception:
+            continue
+
     _BG     = "#0e1117"
     _PANEL  = "#161b22"
     _GRID   = "#222222"
