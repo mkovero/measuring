@@ -182,10 +182,14 @@ def _save_results(results, label, cal=None, cfg=None, show_plot=False):
 
 
 def _ensure_server(client):
-    """Ping server; if not responding, auto-start it and wait up to 3 s."""
+    """Ping server; if not responding and host is local, auto-start and wait up to 3 s."""
     ack = client.send_cmd({"cmd": "status"}, timeout_ms=500)
     if ack is not None:
         return
+    if client._host not in ("localhost", "127.0.0.1"):
+        print(f"  error: server not responding at {client._host}:{client._ctrl_port}")
+        print(f"  Start it on the remote machine with:  ac server enable")
+        sys.exit(1)
     import subprocess
     print("  Starting server...", end=" ", flush=True)
     subprocess.Popen(
@@ -286,24 +290,12 @@ def cmd_setup(cmd, cfg, client):
 
 
 def cmd_dmm_show(_cmd, cfg, client):
-    from . import dmm as _dmm
-    host = cfg.get("dmm_host")
-    if not host:
-        print("\n  error: no DMM configured — run:  ac setup dmm <host>\n")
-        sys.exit(1)
-    print(f"\n  Connecting to DMM at {host}...")
-    try:
-        idn = _dmm.identify(host)
-        print(f"  {idn}")
-    except Exception as e:
-        print(f"  (identify failed: {e})")
-    try:
-        vrms = _dmm.read_ac_vrms(host)
-        from .conversions import fmt_vrms, fmt_vpp
-        print(f"\n  AC  {fmt_vrms(vrms)}  =  {vrms_to_dbu(vrms):+.2f} dBu  =  {fmt_vpp(vrms)}\n")
-    except Exception as e:
-        print(f"\n  error reading DMM: {e}\n")
-        sys.exit(1)
+    from .conversions import fmt_vrms, fmt_vpp
+    ack = _check_ack(client.send_cmd({"cmd": "dmm_read"}))
+    if ack.get("idn"):
+        print(f"\n  {ack['idn']}")
+    vrms = ack["vrms"]
+    print(f"\n  AC  {fmt_vrms(vrms)}  =  {vrms_to_dbu(vrms):+.2f} dBu  =  {fmt_vpp(vrms)}\n")
 
 
 def cmd_calibrate_show(_cmd, cfg, client):
@@ -858,11 +850,6 @@ def main():
         save_config({"server_host": host})
         print(f"  Server host set to: {host}")
         print(f"  All ac commands will now route through tcp://{host}:{CTRL_PORT}")
-        return
-
-    # DMM show is local (connects to DMM directly)
-    if cmd["cmd"] == "dmm_show":
-        cmd_dmm_show(cmd, cfg, client=None)
         return
 
     # --- All other commands route through ZMQ ---

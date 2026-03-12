@@ -416,6 +416,22 @@ def run_server(ctrl_port=CTRL_PORT, data_port=DATA_PORT):
                 cfg = save_config(update)
             return {"ok": True, "config": dict(cfg)}
 
+        if name == "dmm_read":
+            dmm_host = cfg.get("dmm_host")
+            if not dmm_host:
+                return {"ok": False,
+                        "error": "no DMM configured on server — run: ac setup dmm <host>"}
+            try:
+                from . import dmm as _dmm
+                vrms = _dmm.read_ac_vrms(dmm_host, n=3)
+                try:
+                    idn = _dmm.identify(dmm_host)
+                except Exception:
+                    idn = None
+                return {"ok": True, "vrms": vrms, "idn": idn}
+            except Exception as e:
+                return {"ok": False, "error": str(e)}
+
         # --- Audio commands require JACK ---
         if _is_busy():
             return {"ok": False,
