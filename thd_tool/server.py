@@ -285,8 +285,9 @@ def _worker_generate(pub_q, stop_ev, cfg, cmd):
     amplitude  = 10.0 ** (level_dbfs / 20.0)
     out_ports  = cmd["_out_ports"]   # pre-resolved in handle()
 
-    engine = JackEngine()
+    engine = None
     try:
+        engine = JackEngine()
         engine.set_tone(freq, amplitude)
         engine.start(output_ports=out_ports)
         stop_ev.wait()
@@ -294,8 +295,9 @@ def _worker_generate(pub_q, stop_ev, cfg, cmd):
         _pub(pub_q, "error", {"cmd": "generate", "message": str(e)})
         return
     finally:
-        engine.set_silence()
-        engine.stop()
+        if engine is not None:
+            engine.set_silence()
+            engine.stop()
     _pub(pub_q, "done", {"cmd": "generate"})
 
 

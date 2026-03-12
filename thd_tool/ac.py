@@ -217,15 +217,14 @@ def _ensure_server(client):
     ack = client.send_cmd({"cmd": "status"}, timeout_ms=500)
 
     if ack is not None:
-        # Check whether server was built from older source than what we're running.
-        if ack.get("src_mtime", 0) < _src_mtime() - 0.5:
-            # Stale — ask it to quit then respawn
-            client.send_cmd({"cmd": "quit"}, timeout_ms=1000)
-            time.sleep(0.3)
-            if client._host not in ("localhost", "127.0.0.1"):
-                print(f"  error: remote server is outdated; restart it with:  ac server enable")
-                sys.exit(1)
-            _spawn_local_server(client)
+        # Only check staleness for the local auto-spawned server.
+        # Remote servers have independent source trees with unrelated mtimes.
+        if client._host in ("localhost", "127.0.0.1"):
+            if ack.get("src_mtime", 0) < _src_mtime() - 0.5:
+                # Local server is stale — ask it to quit then respawn
+                client.send_cmd({"cmd": "quit"}, timeout_ms=1000)
+                time.sleep(0.3)
+                _spawn_local_server(client)
         return
 
     if client._host not in ("localhost", "127.0.0.1"):
