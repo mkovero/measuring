@@ -68,6 +68,12 @@ def test_monitor_thd():
     assert r["interval"] == 0.5
 
 
+def test_monitor_thd_default_level():
+    # Default when no level given: -12 dBFS so it works without calibration
+    r = parse(["monitor", "thd"])
+    assert r["level"] == ("dbfs", -12.0)
+
+
 def test_monitor_spectrum_abbreviations():
     r = parse(["m", "sp", "-12dbfs", "1khz"])
     assert r["cmd"]   == "monitor_spectrum"

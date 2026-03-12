@@ -465,6 +465,7 @@ def cmd_sweep_level(cmd, cfg, client):
         "stop_dbfs":  stop_db,
         "step_db":    step_db,
     }))
+    print(f"  Output: {ack['out_port']}  →  Input: {ack['in_port']}")
 
     results = []
 
@@ -503,6 +504,7 @@ def cmd_sweep_frequency(cmd, cfg, client):
         "level_dbfs": level_db,
         "ppd":        cmd["ppd"],
     }))
+    print(f"  Output: {ack['out_port']}  →  Input: {ack['in_port']}")
 
     results = []
 
@@ -525,7 +527,14 @@ def cmd_sweep_frequency(cmd, cfg, client):
 def cmd_monitor_thd(cmd, cfg, client):
     freq     = cmd["freq"]
     cal_info = _get_cal(client, freq)
-    level_db = _level_to_dbfs(cmd["level"], cal_info)
+    level    = cmd["level"]
+    # Fall back to dBFS if level is dBu but no calibration is available
+    if isinstance(level, tuple) and level[0] == "dbu" and not (
+            cal_info and cal_info.get("vrms_at_0dbfs_out")):
+        print("  No output calibration — using -12.0 dBFS")
+        level_db = -12.0
+    else:
+        level_db = _level_to_dbfs(level, cal_info)
 
     ack = _check_ack(client.send_cmd({
         "cmd":        "monitor_thd",
@@ -533,6 +542,7 @@ def cmd_monitor_thd(cmd, cfg, client):
         "level_dbfs": level_db,
         "interval":   cmd["interval"],
     }))
+    print(f"  Output: {ack['out_port']}  →  Input: {ack['in_port']}")
     print(f"  {freq:.0f} Hz  |  {level_db:.1f} dBFS  |  Ctrl+C to stop\n")
 
     try:
@@ -580,6 +590,7 @@ def cmd_monitor_spectrum(cmd, cfg, client):
         "level_dbfs": level_db,
         "interval":   cmd["interval"],
     }))
+    print(f"  Output: {ack['out_port']}  →  Input: {ack['in_port']}")
     print(f"  {freq:.0f} Hz  |  {level_db:.1f} dBFS  |  Ctrl+C to stop\n")
 
     _BG    = "#0e1117"

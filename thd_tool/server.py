@@ -94,9 +94,8 @@ def _worker_sweep_level(pub_q, stop_ev, cfg, cmd):
                                  freq=freq)
 
     levels_db = np.arange(start_db, stop_db + step_db * 0.5, step_db)
-    playback, capture = find_ports()
-    out_port = port_name(playback, cfg["output_channel"])
-    in_port  = port_name(capture,  cfg["input_channel"])
+    out_port  = cmd["_out_port"]
+    in_port   = cmd["_in_port"]
     xruns = 0
     n = 0
     engine = JackEngine()
@@ -141,9 +140,8 @@ def _worker_sweep_frequency(pub_q, stop_ev, cfg, cmd):
     freqs     = np.unique(np.round(np.geomspace(start_hz, stop_hz, n_points)).astype(int))
     amplitude = 10.0 ** (level_dbfs / 20.0)
 
-    playback, capture = find_ports()
-    out_port = port_name(playback, cfg["output_channel"])
-    in_port  = port_name(capture,  cfg["input_channel"])
+    out_port  = cmd["_out_port"]
+    in_port   = cmd["_in_port"]
     xruns = 0
     n = 0
     engine = JackEngine()
@@ -185,9 +183,8 @@ def _worker_monitor_thd(pub_q, stop_ev, cfg, cmd):
     amplitude = 10.0 ** (level_dbfs / 20.0)
     duration  = max(0.1, interval)
 
-    playback, capture = find_ports()
-    out_port = port_name(playback, cfg["output_channel"])
-    in_port  = port_name(capture,  cfg["input_channel"])
+    out_port  = cmd["_out_port"]
+    in_port   = cmd["_in_port"]
     engine = JackEngine()
     try:
         engine.start(output_ports=out_port, input_port=in_port)
@@ -236,9 +233,8 @@ def _worker_monitor_spectrum(pub_q, stop_ev, cfg, cmd):
     amplitude = 10.0 ** (level_dbfs / 20.0)
     duration  = max(0.05, interval)
 
-    playback, capture = find_ports()
-    out_port = port_name(playback, cfg["output_channel"])
-    in_port  = port_name(capture,  cfg["input_channel"])
+    out_port  = cmd["_out_port"]
+    in_port   = cmd["_in_port"]
     engine = JackEngine()
     try:
         engine.start(output_ports=out_port, input_port=in_port)
@@ -468,25 +464,44 @@ def run_server(ctrl_port=CTRL_PORT, data_port=DATA_PORT):
             return {"ok": False,
                     "error": f"busy: {running_cmd[0]} running — send stop first"}
 
+        # Resolve ports for all JACK commands before spawning so we can
+        # (a) validate the channel indices immediately, (b) include port
+        # names in the ack so the client can display them, and (c) avoid
+        # the workers calling find_ports() outside a try/except.
+        if name in ("sweep_level", "sweep_frequency",
+                    "monitor_thd", "monitor_spectrum"):
+            try:
+                playback, capture = find_ports()
+                out_port = port_name(playback, cfg["output_channel"])
+                in_port  = port_name(capture,  cfg["input_channel"])
+            except Exception as e:
+                return {"ok": False, "error": f"port error: {e}"}
+            cmd["_out_port"] = out_port
+            cmd["_in_port"]  = in_port
+
         if name == "sweep_level":
             running_cmd[0] = "sweep_level"
             _spawn(_worker_sweep_level, pub_q, stop_ev, cfg, cmd)
-            return {"ok": True}
+            return {"ok": True,
+                    "out_port": cmd["_out_port"], "in_port": cmd["_in_port"]}
 
         if name == "sweep_frequency":
             running_cmd[0] = "sweep_frequency"
             _spawn(_worker_sweep_frequency, pub_q, stop_ev, cfg, cmd)
-            return {"ok": True}
+            return {"ok": True,
+                    "out_port": cmd["_out_port"], "in_port": cmd["_in_port"]}
 
         if name == "monitor_thd":
             running_cmd[0] = "monitor_thd"
             _spawn(_worker_monitor_thd, pub_q, stop_ev, cfg, cmd)
-            return {"ok": True}
+            return {"ok": True,
+                    "out_port": cmd["_out_port"], "in_port": cmd["_in_port"]}
 
         if name == "monitor_spectrum":
             running_cmd[0] = "monitor_spectrum"
             _spawn(_worker_monitor_spectrum, pub_q, stop_ev, cfg, cmd)
-            return {"ok": True}
+            return {"ok": True,
+                    "out_port": cmd["_out_port"], "in_port": cmd["_in_port"]}
 
         if name == "generate":
             running_cmd[0] = "generate"

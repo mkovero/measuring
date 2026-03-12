@@ -114,6 +114,8 @@ def test_sweep_level_frames(server_client):
         "step_db":     2.0,
     })
     assert ack["ok"] is True
+    assert "out_port" in ack and ack["out_port"]
+    assert "in_port"  in ack and ack["in_port"]
 
     frames = recv_until(client, done_topics=("done", "error"), timeout_ms=15000)
     topics = [t for t, _ in frames]
@@ -169,6 +171,8 @@ def test_sweep_frequency_frames(server_client):
         "ppd":         3,       # 1 decade × 3 ppd ≈ 3 points
     })
     assert ack["ok"] is True
+    assert "out_port" in ack and ack["out_port"]
+    assert "in_port"  in ack and ack["in_port"]
 
     frames = recv_until(client, done_topics=("done", "error"), timeout_ms=30000)
     topics = [t for t, _ in frames]
@@ -184,6 +188,40 @@ def test_sweep_frequency_frames(server_client):
 # ---------------------------------------------------------------------------
 # Busy guard
 # ---------------------------------------------------------------------------
+
+def test_monitor_thd_port_info(server_client):
+    """monitor_thd ack must include out_port and in_port."""
+    client = server_client
+    ack = client.send_cmd({
+        "cmd":        "monitor_thd",
+        "freq_hz":    1000.0,
+        "level_dbfs": -20.0,
+        "interval":   0.05,
+    })
+    assert ack["ok"] is True
+    assert "out_port" in ack and ack["out_port"]
+    assert "in_port"  in ack and ack["in_port"]
+    _stop_and_drain(client)
+
+
+def test_bad_channel_returns_error(server_client):
+    """A channel index out of range must return ok=False immediately (no crash)."""
+    client = server_client
+    # Temporarily set an out-of-range output channel
+    client.send_cmd({"cmd": "setup", "update": {"output_channel": 99}})
+    ack = client.send_cmd({
+        "cmd":        "sweep_level",
+        "freq_hz":    1000.0,
+        "start_dbfs": -20.0,
+        "stop_dbfs":  -18.0,
+        "step_db":     2.0,
+    })
+    # Restore
+    client.send_cmd({"cmd": "setup", "update": {"output_channel": 0}})
+    assert ack is not None
+    assert ack["ok"] is False
+    assert "port" in ack.get("error", "").lower() or "range" in ack.get("error", "").lower()
+
 
 def test_busy_guard(server_client):
     """Starting a second command while server is busy must return ok=False."""

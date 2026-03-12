@@ -265,7 +265,7 @@ def parse(argv):
             raise ParseError("monitor needs a noun: thd | spectrum")
         noun   = _expand(args.pop(0))
         tokens   = _classify_all(args)
-        level    = _pull(tokens, "level", optional=True) or ("dbu", 0.0)  # 0dBu -- converted at runtime
+        level    = _pull(tokens, "level", optional=True) or ("dbfs", -12.0)
         freq     = _pull(tokens, "freq",  optional=True) or 1000.0
         interval = _pull(tokens, "time",  optional=True) or 1.0
         if tokens:
