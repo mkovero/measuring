@@ -372,24 +372,21 @@ def parse(argv):
         return result
 
     elif verb == "server":
-        tokens   = _classify_all(args)
-        freq     = _pull(tokens, "freq",  optional=True) or 1000.0
-        level    = _pull(tokens, "level", optional=True) or ("dbfs", -12.0)
-        interval = _pull(tokens, "time",  optional=True) or 0.2
-        if tokens:
-            raise ParseError(f"unexpected token(s): {tokens}")
-        return {"cmd": "server", "freq": freq, "level": level, "interval": interval}
-
-    elif verb == "remote":
+        # ac server enable          -- start the ZMQ server daemon
+        # ac server 1.2.3.4         -- set server host and save to config
+        # ac server                 -- set server host to localhost (default)
         if not args:
-            raise ParseError("remote needs a host: ac remote 1.2.3.4")
+            return {"cmd": "server_set_host", "host": "localhost"}
+        sub = args[0].lower()
+        if sub in ("enable", "start", "daemon"):
+            return {"cmd": "server_enable"}
         host = args.pop(0)
         if args:
             raise ParseError(f"unexpected token(s) after host: {args}")
-        return {"cmd": "remote", "host": host}
+        return {"cmd": "server_set_host", "host": host}
 
     else:
-        raise ParseError(f"unknown command: {verb!r}  (sweep | monitor | generate | calibrate | setup | devices)")
+        raise ParseError(f"unknown command: {verb!r}  (sweep | monitor | generate | calibrate | setup | devices | server)")
 
 
 # ---------------------------------------------------------------------------
@@ -406,6 +403,8 @@ ac -- audio bench tool
   ac generate sine <level> [<freq>]
   ac calibrate     [output N] [input N] [<freq>] [<level>]
   ac calibrate show
+  ac server enable          (start ZMQ server daemon on this machine)
+  ac server [<host>]        (connect to server at host, default: localhost)
 
 Units:
   frequency : 20hz  1khz  20000hz
@@ -447,6 +446,9 @@ Examples:
   ac setup output 11 input 0 device 0
   ac setup output 1   # change just one value
   ac setup dmm 172.19.92.100
+  ac server enable           # start server daemon (blocking)
+  ac server 192.168.1.5      # point future ac commands at that host
+  ac server                  # point at localhost (default)
 """
 
 

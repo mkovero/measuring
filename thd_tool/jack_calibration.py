@@ -290,3 +290,92 @@ def run_calibration_jack(output_channel=0, input_channel=0,
     cal.summary()
     cal.save()
     return cal
+
+
+# ---------------------------------------------------------------------------
+# ZMQ calibration procedure (used by server worker)
+# ---------------------------------------------------------------------------
+
+def run_calibration_jack_zmq(pub_q, cal_q,
+                              output_channel=0, input_channel=0,
+                              ref_dbfs=-10.0, freq=1000):
+    """Calibration for the ZMQ server: publishes cal_prompt/cal_done instead of
+    using input().  pub_q is a queue.Queue; cal_q receives vrms from cal_reply."""
+    import json
+    import time
+
+    def _pub(topic, frame):
+        pub_q.put(topic.encode() + b" " + json.dumps(frame).encode())
+
+    cal          = Calibration(output_channel=output_channel,
+                               input_channel=input_channel,
+                               freq=freq)
+    cal.ref_dbfs = ref_dbfs
+    amplitude    = 10.0 ** (ref_dbfs / 20.0)
+
+    playback, capture = find_ports()
+    out_port = port_name(playback, output_channel)
+    in_port  = port_name(capture,  input_channel)
+
+    engine = JackEngine()
+    engine.set_tone(freq, amplitude)
+    engine.start(output_ports=out_port, input_port=in_port)
+    time.sleep(0.5)   # let analog output settle
+
+    _pub("cal_prompt", {
+        "step": 1,
+        "text": (f"STEP 1 — Output voltage (loaded)\n"
+                 f"  Connect output -> loopback cable.\n"
+                 f"  Probe the OUTPUT jack with DMM and enter reading below."),
+        "dmm_vrms": None,
+    })
+
+    try:
+        vrms_out = cal_q.get(timeout=120)
+    except Exception:
+        vrms_out = None
+    finally:
+        engine.set_silence()
+
+    if vrms_out is None:
+        engine.stop()
+        _pub("cal_done", {"key": cal.key, "error": "output cal skipped"})
+        return cal
+
+    cal.vrms_at_0dbfs_out = vrms_out / (10.0 ** (ref_dbfs / 20.0))
+
+    # Step 2: loopback capture
+    engine.set_tone(freq, amplitude)
+    duration = max(1.0, 10.0 / freq)
+    try:
+        data = engine.capture_block(duration)
+    except Exception as e:
+        engine.set_silence()
+        engine.stop()
+        _pub("cal_done", {"key": cal.key,
+                          "vrms_at_0dbfs_out": cal.vrms_at_0dbfs_out,
+                          "error": f"loopback capture failed: {e}"})
+        return cal
+
+    engine.set_silence()
+    engine.stop()
+
+    mono           = data.astype(np.float64)
+    trim           = int(len(mono) * 0.05)
+    rec_linear_rms = float(np.sqrt(np.mean(mono[trim:-trim] ** 2)))
+    rec_dbfs       = 20.0 * np.log10(max(rec_linear_rms, 1e-12))
+    drop_db        = rec_dbfs - ref_dbfs
+
+    if drop_db >= -40.0:
+        ratio                = 10.0 ** (drop_db / 20.0)
+        cal.vrms_at_0dbfs_in = cal.vrms_at_0dbfs_out / ratio
+        cal.save()
+    else:
+        cal.save()
+
+    _pub("cal_done", {
+        "key":               cal.key,
+        "vrms_at_0dbfs_out": cal.vrms_at_0dbfs_out,
+        "vrms_at_0dbfs_in":  cal.vrms_at_0dbfs_in,
+    })
+    return cal

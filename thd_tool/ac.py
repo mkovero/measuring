@@ -1,92 +1,166 @@
-# ac.py  -- main entry point for the "ac" CLI  (JACK backend only)
+# ac.py  -- client for the "ac" CLI  (routes all commands through ZMQ server)
 import os
 import sys
 import math
+import json
+import time
 from datetime import datetime
 
-from .parse            import parse, ParseError, USAGE
-from .config           import load as load_config, save as save_config, show as show_config
-from .jack_calibration import run_calibration_jack, Calibration
-from .jack_measure     import jack_sweep_level, jack_sweep_frequency, jack_monitor, jack_monitor_spectrum
-from .audio            import find_ports, port_name, JackEngine
-from .io               import save_csv, print_summary
-from .plotting         import plot_results
-from .conversions      import vrms_to_dbu
+import numpy as np
+
+from .parse       import parse, ParseError, USAGE
+from .config      import load as load_config, save as save_config, show as show_config
+from .io          import save_csv, print_summary
+from .plotting    import plot_results
+from .conversions import vrms_to_dbu, fmt_vrms
+
+
+CTRL_PORT = 5556
+DATA_PORT  = 5557
+
+
+# ---------------------------------------------------------------------------
+# ZMQ client
+# ---------------------------------------------------------------------------
+
+class AcClient:
+    def __init__(self, host="localhost", ctrl_port=CTRL_PORT, data_port=DATA_PORT):
+        try:
+            import zmq
+        except ImportError:
+            print("  error: pyzmq not installed — run: pip install pyzmq")
+            sys.exit(1)
+        self._host      = host
+        self._ctrl_port = ctrl_port
+        self._ctx       = zmq.Context()
+
+        self._ctrl = self._ctx.socket(zmq.REQ)
+        self._ctrl.setsockopt(zmq.LINGER, 0)
+        self._ctrl.connect(f"tcp://{host}:{ctrl_port}")
+
+        self._data = self._ctx.socket(zmq.SUB)
+        self._data.setsockopt(zmq.SUBSCRIBE, b"")
+        self._data.setsockopt(zmq.LINGER, 0)
+        self._data.connect(f"tcp://{host}:{data_port}")
+
+        # Give the SUB socket a moment to register with the publisher
+        time.sleep(0.05)
+
+    def _reconnect_ctrl(self):
+        """Recreate the REQ socket — required after any recv timeout (broken state)."""
+        import zmq
+        self._ctrl.close()
+        self._ctrl = self._ctx.socket(zmq.REQ)
+        self._ctrl.setsockopt(zmq.LINGER, 0)
+        self._ctrl.connect(f"tcp://{self._host}:{self._ctrl_port}")
+
+    def send_cmd(self, cmd, timeout_ms=5000):
+        """Send a command dict, return reply dict or None on timeout."""
+        import zmq
+        self._ctrl.setsockopt(zmq.RCVTIMEO, timeout_ms)
+        try:
+            self._ctrl.send_json(cmd)
+            return self._ctrl.recv_json()
+        except zmq.Again:
+            self._reconnect_ctrl()   # socket is broken after a recv timeout; must reset
+            return None
+        except zmq.ZMQError:
+            self._reconnect_ctrl()
+            return None
+
+    def recv_data(self, timeout_ms=30000):
+        """Receive one DATA frame. Returns (topic, frame) or raises TimeoutError."""
+        if not self._data.poll(timeout_ms):
+            raise TimeoutError("no data from server")
+        msg   = self._data.recv()
+        space = msg.index(b" ")
+        topic = msg[:space].decode()
+        frame = json.loads(msg[space + 1:])
+        return topic, frame
+
+    def close(self):
+        self._ctrl.close()
+        self._data.close()
+        self._ctx.term()
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _require_jack():
-    try:
-        import jack
-        c = jack.Client("ac-probe", no_start_server=True)
-        c.close()
-    except Exception:
-        print("\n  error: JACK server not running.")
-        print("  Start it with:  jackd -d alsa -d hw:0 -r 48000 -p 1024 -n 2\n")
-        sys.exit(1)
+def _get_cal(client, freq_hz):
+    """Fetch calibration from server for the server's configured channels."""
+    ack = client.send_cmd({"cmd": "get_calibration", "freq_hz": freq_hz})
+    if ack and ack.get("ok") and ack.get("found"):
+        return ack
+    return None
 
 
-def _load_cal(cfg, freq):
-    cal = Calibration.load(output_channel=cfg["output_channel"],
-                           input_channel=cfg["input_channel"],
-                           freq=freq)
-    if cal is not None:
-        print("  Loaded calibration:")
-        cal.summary()
-    else:
-        print("  No calibration found for this setup/freq.")
-        print("  Run:  ac calibrate")
-    return cal
-
-
-def _level_to_vrms(level, cal):
-    from .conversions import dbu_to_vrms, get_dbu_ref
-    if isinstance(level, tuple):
-        kind, val = level
-        if kind == "dbu":
-            return dbu_to_vrms(val)
-        if kind == "dbfs":
-            if cal and cal.output_ok:
-                return cal.out_vrms(val)
-            return get_dbu_ref() * 10.0 ** (val / 20.0)
-    return float(level)
-
-
-def _level_to_dbfs(level, cal):
+def _level_to_dbfs(level, cal_info):
+    """Convert a parsed level to dBFS using calibration from server."""
     if isinstance(level, tuple):
         kind, val = level
         if kind == "dbfs":
             return val
         if kind == "dbu":
-            if not (cal and cal.output_ok):
+            v_out = cal_info["vrms_at_0dbfs_out"] if cal_info else None
+            if not v_out:
                 print("  error: dBu levels require output calibration — run:  ac calibrate")
                 sys.exit(1)
-            vrms = _level_to_vrms(level, cal)
-            return 20.0 * math.log10(vrms / cal.vrms_at_0dbfs_out)
+            from .conversions import dbu_to_vrms
+            vrms = dbu_to_vrms(val)
+            return 20.0 * math.log10(vrms / v_out)
     # Vrms
-    if not (cal and cal.output_ok):
+    v_out = cal_info["vrms_at_0dbfs_out"] if cal_info else None
+    if not v_out:
         print("  error: Vrms levels require output calibration — run:  ac calibrate")
         sys.exit(1)
     vrms = float(level)
-    return max(-60.0, min(-0.5, 20.0 * math.log10(vrms / cal.vrms_at_0dbfs_out)))
+    return max(-60.0, min(-0.5, 20.0 * math.log10(vrms / v_out)))
 
 
-def _print_ports(cfg):
-    playback, capture = find_ports()
-    out_port = playback[cfg["output_channel"]] if cfg["output_channel"] < len(playback) else "??"
-    in_port  = capture[cfg["input_channel"]]   if cfg["input_channel"]  < len(capture)  else "??"
-    print(f"  Output: ch {cfg['output_channel']}  ({out_port})")
-    print(f"  Input:  ch {cfg['input_channel']}  ({in_port})")
-    return playback, capture
+def _parse_vrms(raw):
+    """Parse a DMM reading string to Vrms float, or None."""
+    raw = raw.strip().lower().replace(" ", "")
+    if not raw:
+        return None
+    try:
+        if raw.endswith("mv") or raw.endswith("m"):
+            return float(raw.rstrip("mv").rstrip("m")) / 1000.0
+        if raw.endswith("v"):
+            return float(raw.rstrip("v"))
+        return float(raw)
+    except ValueError:
+        return None
 
 
-def _save_results(results, label, cfg, cal, show_plot=False):
+def _cal_from_frame(frame):
+    """Reconstruct a minimal Calibration object from a sweep_point frame."""
+    from .jack_calibration import Calibration
+    v_out = frame.get("vrms_at_0dbfs_out")
+    v_in  = frame.get("vrms_at_0dbfs_in")
+    if v_out is None and v_in is None:
+        return None
+    cal = Calibration()
+    cal.vrms_at_0dbfs_out = v_out
+    cal.vrms_at_0dbfs_in  = v_in
+    return cal
+
+
+def _numpy_results(results):
+    """Convert spectrum/freqs fields from list back to numpy arrays for plotting."""
+    for r in results:
+        if "spectrum" in r and isinstance(r["spectrum"], list):
+            r["spectrum"] = np.array(r["spectrum"])
+        if "freqs" in r and isinstance(r["freqs"], list):
+            r["freqs"] = np.array(r["freqs"])
+    return results
+
+
+def _save_results(results, label, cal=None, cfg=None, show_plot=False):
     ts       = datetime.now().strftime("%Y%m%d_%H%M%S")
     safe     = label.replace(" ", "_")
-    out_dir  = cfg.get("output_dir", ".")
+    out_dir  = (cfg or {}).get("output_dir", ".")
     os.makedirs(out_dir, exist_ok=True)
     csv_path  = os.path.join(out_dir, f"{safe}_{ts}.csv")
     plot_path = os.path.join(out_dir, f"{safe}_{ts}.png")
@@ -94,13 +168,10 @@ def _save_results(results, label, cfg, cal, show_plot=False):
     plot_results(results, device_name=label, output_path=plot_path, cal=cal)
     if show_plot:
         import subprocess
-        viewer_cmds = [
-            ["eog", "--fullscreen", plot_path],
-            ["feh", plot_path],
-            ["xdg-open", plot_path],
-            ["display", plot_path],
-        ]
-        for cmd_args in viewer_cmds:
+        for cmd_args in [["eog", "--fullscreen", plot_path],
+                         ["feh", plot_path],
+                         ["xdg-open", plot_path],
+                         ["display", plot_path]]:
             try:
                 subprocess.Popen(cmd_args,
                                  stdout=subprocess.DEVNULL,
@@ -110,45 +181,111 @@ def _save_results(results, label, cfg, cal, show_plot=False):
                 continue
 
 
+def _ensure_server(client):
+    """Ping server; if not responding, auto-start it and wait up to 3 s."""
+    ack = client.send_cmd({"cmd": "status"}, timeout_ms=500)
+    if ack is not None:
+        return
+    import subprocess
+    print("  Starting server...", end=" ", flush=True)
+    subprocess.Popen(
+        [sys.executable, "-m", "thd_tool", "server", "enable"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    for _ in range(30):          # up to 3 s in 100 ms steps
+        time.sleep(0.1)
+        ack = client.send_cmd({"cmd": "status"}, timeout_ms=200)
+        if ack is not None:
+            print("OK")
+            return
+    print("failed")
+    print("  Could not start server. Run manually:  ac server enable")
+    sys.exit(1)
+
+
+def _check_ack(ack, context=""):
+    if ack is None:
+        print(f"  error: server not responding{(' — ' + context) if context else ''}")
+        sys.exit(1)
+    if not ack.get("ok"):
+        print(f"  error: {ack.get('error', 'unknown error')}")
+        sys.exit(1)
+    return ack
+
+
+def _collect_stream(client, cmd_name, on_data, timeout_ms=60000):
+    """Receive DATA frames until done/error. Returns xruns count."""
+    try:
+        while True:
+            topic, frame = client.recv_data(timeout_ms=timeout_ms)
+            if topic == "data":
+                on_data(frame)
+            elif topic == "done":
+                if frame.get("xruns"):
+                    print(f"\n  !! {frame['xruns']} xrun(s) during {cmd_name}")
+                return frame.get("xruns", 0)
+            elif topic == "error":
+                print(f"\n  !! {frame.get('message', 'error')}")
+                return 0
+    except TimeoutError:
+        print(f"\n  error: timeout waiting for {cmd_name} data")
+        return 0
+    except KeyboardInterrupt:
+        client.send_cmd({"cmd": "stop"})
+        print("\n  Stopped.")
+        return 0
+
+
 # ---------------------------------------------------------------------------
 # Command handlers
 # ---------------------------------------------------------------------------
 
-def cmd_devices(_cmd, cfg):
-    _require_jack()
-    playback, capture = find_ports()
+def cmd_devices(_cmd, cfg, client):
+    ack = _check_ack(client.send_cmd({"cmd": "devices"}), "devices")
+    playback = ack.get("playback", [])
+    capture  = ack.get("capture",  [])
+    out_ch   = ack.get("output_channel", 0)
+    in_ch    = ack.get("input_channel",  0)
     print("\n  JACK ports:")
-    print(f"  Configured:  output ch {cfg['output_channel']}  ->  "
-          f"{playback[cfg['output_channel']] if cfg['output_channel'] < len(playback) else '??'}")
-    print(f"               input  ch {cfg['input_channel']}  ->  "
-          f"{capture[cfg['input_channel']] if cfg['input_channel'] < len(capture) else '??'}")
+    print(f"  Configured:  output ch {out_ch}  ->  "
+          f"{playback[out_ch] if out_ch < len(playback) else '??'}")
+    print(f"               input  ch {in_ch}  ->  "
+          f"{capture[in_ch] if in_ch < len(capture) else '??'}")
     print("\n  Playback:")
     for i, p in enumerate(playback):
-        mark = "  <--" if i == cfg["output_channel"] else ""
+        mark = "  <--" if i == out_ch else ""
         print(f"    {i:>3}  {p}{mark}")
     print("\n  Capture:")
     for i, p in enumerate(capture):
-        mark = "  <--" if i == cfg["input_channel"] else ""
+        mark = "  <--" if i == in_ch else ""
         print(f"    {i:>3}  {p}{mark}")
     print()
 
 
-def cmd_setup(cmd, cfg):
+def cmd_setup(cmd, cfg, client):
     update = {}
     if "device"       in cmd: update["device"]         = cmd["device"]
     if "output"       in cmd: update["output_channel"] = cmd["output"]
     if "input"        in cmd: update["input_channel"]  = cmd["input"]
     if "dbu_ref_vrms" in cmd: update["dbu_ref_vrms"]   = cmd["dbu_ref_vrms"]
     if "dmm_host"     in cmd: update["dmm_host"]       = cmd["dmm_host"]
-    if not update:
-        show_config(cfg)
-        return
-    new_cfg = save_config(update)
-    show_config(new_cfg)
-    print("  Saved.")
+    ack = _check_ack(client.send_cmd({"cmd": "setup", "update": update}))
+    srv_cfg = ack.get("config", {})
+    ref = srv_cfg.get("dbu_ref_vrms", 0.77459667)
+    print(f"\n  -- Hardware config (server) --")
+    print(f"  Device:         {srv_cfg.get('device', '?')}")
+    print(f"  Output channel: {srv_cfg.get('output_channel', '?')}")
+    print(f"  Input channel:  {srv_cfg.get('input_channel',  '?')}")
+    print(f"  dBu reference: {ref*1000:.4f} mVrms  ({ref:.8f} V)")
+    dmm = srv_cfg.get("dmm_host")
+    print(f"  DMM host:      {dmm if dmm else '(not configured)'}")
+    if update:
+        print("  Saved.")
+    print()
 
 
-def cmd_dmm_show(_cmd, cfg):
+def cmd_dmm_show(_cmd, cfg, client):
     from . import dmm as _dmm
     host = cfg.get("dmm_host")
     if not host:
@@ -169,216 +306,505 @@ def cmd_dmm_show(_cmd, cfg):
         sys.exit(1)
 
 
-def cmd_calibrate_show(_cmd, _cfg):
+def cmd_calibrate_show(_cmd, cfg, client):
     from .jack_calibration import DEFAULT_CAL_PATH
-    cals = Calibration.load_all()
+    ack = _check_ack(client.send_cmd({"cmd": "list_calibrations"}))
+    cals = ack.get("calibrations", [])
     if not cals:
         print(f"\n  No calibrations stored  ({DEFAULT_CAL_PATH})\n")
         return
     print(f"\n  Stored calibrations  ({DEFAULT_CAL_PATH})\n")
-    for cal in cals:
-        print(f"  [{cal.key}]")
-        if cal.output_ok:
-            v = cal.vrms_at_0dbfs_out
-            print(f"    Output: 0 dBFS = {v*1000:.3f} mVrms  =  {vrms_to_dbu(v):+.2f} dBu")
+    for c in cals:
+        print(f"  [{c['key']}]")
+        v = c.get("vrms_at_0dbfs_out")
+        if v:
+            print(f"    Output: 0 dBFS = {fmt_vrms(v):>14}  =  {vrms_to_dbu(v):+.2f} dBu")
         else:
             print(f"    Output: not calibrated")
-        if cal.input_ok:
-            v = cal.vrms_at_0dbfs_in
-            print(f"    Input:  0 dBFS = {v*1000:.3f} mVrms  =  {vrms_to_dbu(v):+.2f} dBu")
+        v = c.get("vrms_at_0dbfs_in")
+        if v:
+            print(f"    Input:  0 dBFS = {fmt_vrms(v):>14}  =  {vrms_to_dbu(v):+.2f} dBu")
         else:
             print(f"    Input:  not calibrated")
         print()
 
 
-def cmd_calibrate(cmd, cfg):
-    _require_jack()
-    freq   = cmd["freq"]
-    level  = cmd["level"]
-    out_ch = cmd.get("output_channel", cfg["output_channel"])
-    in_ch  = cmd.get("input_channel",  cfg["input_channel"])
+def cmd_calibrate(cmd, cfg, client):
+    freq    = cmd["freq"]
+    level   = cmd["level"]
+    out_ch  = cmd.get("output_channel")
+    in_ch   = cmd.get("input_channel")
 
+    cal_info = _get_cal(client, freq)
     if isinstance(level, tuple) and level[0] == "dbfs":
         ref_dbfs = level[1]
+    elif cal_info:
+        ref_dbfs = _level_to_dbfs(level, cal_info)
     else:
-        cal      = Calibration.load(output_channel=out_ch, input_channel=in_ch, freq=freq)
-        ref_dbfs = _level_to_dbfs(level, cal) if cal else -10.0
+        ref_dbfs = -10.0
 
-    # Show which ports will be used (may differ from configured default)
-    playback, capture = find_ports()
-    print(f"  Output: ch {out_ch}  ({port_name(playback, out_ch)})")
-    print(f"  Input:  ch {in_ch}  ({port_name(capture, in_ch)})")
-    run_calibration_jack(
-        output_channel = out_ch,
-        input_channel  = in_ch,
-        ref_dbfs       = ref_dbfs,
-        freq           = freq,
-        dmm_host       = cfg.get("dmm_host"),
-    )
+    c = {"cmd": "calibrate", "freq_hz": freq, "ref_dbfs": ref_dbfs}
+    if out_ch is not None:
+        c["output_channel"] = out_ch
+    if in_ch is not None:
+        c["input_channel"] = in_ch
+
+    ack = _check_ack(client.send_cmd(c, timeout_ms=5000))
+    print(f"  Calibration started: {freq:.0f} Hz  |  {ref_dbfs:.1f} dBFS")
+
+    try:
+        while True:
+            topic, frame = client.recv_data(timeout_ms=120000)
+            if topic == "cal_prompt":
+                print(f"\n  {frame['text']}\n")
+                if frame.get("dmm_vrms") is not None:
+                    hint = f"{frame['dmm_vrms'] * 1000:.4f} mVrms"
+                    raw  = input(f"  Enter to accept ({hint}), or override: ").strip()
+                    vrms = _parse_vrms(raw) if raw else frame["dmm_vrms"]
+                else:
+                    while True:
+                        raw = input("  DMM reading (e.g. 245mV or 0.245): ").strip()
+                        vrms = _parse_vrms(raw)
+                        if vrms is not None:
+                            break
+                        print("  Try:  0.245  or  245mV")
+                client.send_cmd({"cmd": "cal_reply", "vrms": vrms})
+            elif topic == "cal_done":
+                print(f"\n  Calibration saved: [{frame.get('key')}]")
+                v = frame.get("vrms_at_0dbfs_out")
+                if v:
+                    print(f"  Output: 0 dBFS = {fmt_vrms(v)}  =  {vrms_to_dbu(v):+.2f} dBu")
+                v = frame.get("vrms_at_0dbfs_in")
+                if v:
+                    print(f"  Input:  0 dBFS = {fmt_vrms(v)}  =  {vrms_to_dbu(v):+.2f} dBu")
+                err = frame.get("error")
+                if err:
+                    print(f"  Note: {err}")
+                print()
+                break
+            elif topic == "error":
+                print(f"  error: {frame.get('message')}")
+                break
+    except TimeoutError:
+        print("  error: calibration timed out")
+    except KeyboardInterrupt:
+        client.send_cmd({"cmd": "stop"})
+        print("\n  Calibration cancelled.")
 
 
-def cmd_sweep_level(cmd, cfg):
-    _require_jack()
+def _print_sweep_header(have_cal):
+    print("\n" + "─" * 78)
+    if have_cal:
+        print("  " + "  ".join([f"{'Drive':>8}", f"{'Out Vrms':>12}", f"{'Out dBu':>8}",
+                                  f"{'In Vrms':>12}", f"{'In dBu':>8}",
+                                  f"{'Gain':>8}", f"{'THD%':>9}", f"{'THD+N%':>9}"]))
+        print("  " + "  ".join(["─"*8, "─"*12, "─"*8, "─"*12, "─"*8, "─"*8, "─"*9, "─"*9]))
+    else:
+        print("  " + "  ".join([f"{'Drive':>8}", f"{'THD%':>9}", f"{'THD+N%':>9}"]))
+
+
+def _print_freq_header(have_cal):
+    print("\n" + "─" * 78)
+    if have_cal:
+        print("  " + "  ".join([f"{'Freq':>8}", f"{'Out Vrms':>12}", f"{'Out dBu':>8}",
+                                  f"{'In Vrms':>12}", f"{'In dBu':>8}",
+                                  f"{'Gain':>8}", f"{'THD%':>9}", f"{'THD+N%':>9}"]))
+        print("  " + "  ".join(["─"*8, "─"*12, "─"*8, "─"*12, "─"*8, "─"*8, "─"*9, "─"*9]))
+    else:
+        print("  " + "  ".join([f"{'Freq':>8}", f"{'THD%':>9}", f"{'THD+N%':>9}"]))
+
+
+def _print_sweep_row(frame):
+    drive = frame["drive_db"]
+    thd   = frame["thd_pct"]
+    thdn  = frame["thdn_pct"]
+    clip  = "  [CLIP]" if frame.get("clipping") else ""
+    if frame.get("out_vrms") is not None:
+        out_s  = fmt_vrms(frame["out_vrms"])
+        in_s   = fmt_vrms(frame["in_vrms"]) if frame.get("in_vrms") is not None else "  -"
+        odbu   = f"{frame['out_dbu']:+.2f}"  if frame.get("out_dbu") is not None else "  -"
+        idbu   = f"{frame['in_dbu']:+.2f}"   if frame.get("in_dbu")  is not None else "  -"
+        gain_s = f"{frame['gain_db']:+.2f}dB" if frame.get("gain_db") is not None else "  -"
+        print(f"  {drive:>7.1f}dB  {out_s:>12}  {odbu:>8}  "
+              f"{in_s:>12}  {idbu:>8}  {gain_s:>8}  "
+              f"{thd:>9.4f}  {thdn:>9.4f}{clip}")
+    else:
+        print(f"  {drive:>7.1f}dBFS  {thd:>9.4f}  {thdn:>9.4f}")
+
+
+def _print_freq_row(frame):
+    freq  = frame.get("freq_hz", frame.get("fundamental_hz", 0))
+    thd   = frame["thd_pct"]
+    thdn  = frame["thdn_pct"]
+    flag  = "  [CLIP]" if frame.get("clipping") else ("  [AC]" if frame.get("ac_coupled") else "")
+    if frame.get("out_vrms") is not None:
+        out_s  = fmt_vrms(frame["out_vrms"])
+        in_s   = fmt_vrms(frame["in_vrms"]) if frame.get("in_vrms") is not None else "  -"
+        odbu   = f"{frame['out_dbu']:+.2f}"  if frame.get("out_dbu") is not None else "  -"
+        idbu   = f"{frame['in_dbu']:+.2f}"   if frame.get("in_dbu")  is not None else "  -"
+        gain_s = f"{frame['gain_db']:+.2f}dB" if frame.get("gain_db") is not None else "  -"
+        print(f"  {freq:>7.0f} Hz  {out_s:>12}  {odbu:>8}  "
+              f"{in_s:>12}  {idbu:>8}  {gain_s:>8}  "
+              f"{thd:>9.4f}  {thdn:>9.4f}{flag}")
+    else:
+        print(f"  {freq:>7.0f} Hz  {thd:>9.4f}  {thdn:>9.4f}{flag}")
+
+
+def cmd_sweep_level(cmd, cfg, client):
     freq     = cmd["freq"]
-    cal      = _load_cal(cfg, freq)
-    start_db = _level_to_dbfs(cmd["start"], cal)
-    stop_db  = _level_to_dbfs(cmd["stop"],  cal)
+    cal_info = _get_cal(client, freq)
+    if cal_info:
+        print("  Loaded calibration from server.")
+    else:
+        print("  No calibration found — levels in dBFS only.")
+    start_db = _level_to_dbfs(cmd["start"], cal_info)
+    stop_db  = _level_to_dbfs(cmd["stop"],  cal_info)
     step     = cmd["step"]
     step_db  = step[1] if isinstance(step, tuple) else float(step)
-    _print_ports(cfg)
-    results  = jack_sweep_level(cfg, freq, start_db, stop_db, step_db, cal=cal)
+
+    print(f"\n  Level sweep: {start_db:.1f} -> {stop_db:.1f} dBFS  "
+          f"step {step_db:.1f} dB  |  {freq:.0f} Hz")
+    _print_sweep_header(cal_info is not None)
+
+    ack = _check_ack(client.send_cmd({
+        "cmd":        "sweep_level",
+        "freq_hz":    freq,
+        "start_dbfs": start_db,
+        "stop_dbfs":  stop_db,
+        "step_db":    step_db,
+    }))
+
+    results = []
+
+    def on_data(frame):
+        if frame.get("type") == "sweep_point":
+            results.append(frame)
+            _print_sweep_row(frame)
+
+    _collect_stream(client, "sweep_level", on_data, timeout_ms=120000)
+
     if not results:
         return
+    _numpy_results(results)
+    cal = _cal_from_frame(results[0])
     print_summary(results, "DUT", cal=cal)
-    _save_results(results, "sweep_level", cfg, cal, show_plot=cmd.get("show_plot", False))
+    _save_results(results, "sweep_level", cal=cal, cfg=cfg,
+                  show_plot=cmd.get("show_plot", False))
 
 
-def cmd_sweep_frequency(cmd, cfg):
-    _require_jack()
-    cal      = _load_cal(cfg, 1000.0)
-    level_db = _level_to_dbfs(cmd["level"], cal)
-    _print_ports(cfg)
-    results  = jack_sweep_frequency(cfg, cmd["start"], cmd["stop"], level_db,
-                                    ppd=cmd["ppd"], cal=cal)
+def cmd_sweep_frequency(cmd, cfg, client):
+    cal_info = _get_cal(client, 1000.0)
+    if cal_info:
+        print("  Loaded calibration from server.")
+    else:
+        print("  No calibration found — levels in dBFS only.")
+    level_db = _level_to_dbfs(cmd["level"], cal_info)
+
+    print(f"\n  Freq sweep: {cmd['start']:.0f} -> {cmd['stop']:.0f} Hz  "
+          f"{cmd['ppd']} pts/decade  |  {level_db:.1f} dBFS")
+    _print_freq_header(cal_info is not None)
+
+    ack = _check_ack(client.send_cmd({
+        "cmd":        "sweep_frequency",
+        "start_hz":   cmd["start"],
+        "stop_hz":    cmd["stop"],
+        "level_dbfs": level_db,
+        "ppd":        cmd["ppd"],
+    }))
+
+    results = []
+
+    def on_data(frame):
+        if frame.get("type") == "sweep_point":
+            results.append(frame)
+            _print_freq_row(frame)
+
+    _collect_stream(client, "sweep_frequency", on_data, timeout_ms=300000)
+
     if not results:
         return
+    _numpy_results(results)
+    cal = _cal_from_frame(results[0])
     print_summary(results, "DUT", cal=cal)
-    _save_results(results, "sweep_frequency", cfg, cal, show_plot=cmd.get("show_plot", False))
+    _save_results(results, "sweep_frequency", cal=cal, cfg=cfg,
+                  show_plot=cmd.get("show_plot", False))
 
 
-def cmd_monitor_thd(cmd, cfg):
-    _require_jack()
+def cmd_monitor_thd(cmd, cfg, client):
     freq     = cmd["freq"]
-    cal      = _load_cal(cfg, freq)
-    level_db = _level_to_dbfs(cmd["level"], cal)
-    _print_ports(cfg)
-    jack_monitor(cfg, freq, level_db, cal=cal, interval=cmd["interval"])
+    cal_info = _get_cal(client, freq)
+    level_db = _level_to_dbfs(cmd["level"], cal_info)
+
+    ack = _check_ack(client.send_cmd({
+        "cmd":        "monitor_thd",
+        "freq_hz":    freq,
+        "level_dbfs": level_db,
+        "interval":   cmd["interval"],
+    }))
+    print(f"  {freq:.0f} Hz  |  {level_db:.1f} dBFS  |  Ctrl+C to stop\n")
+
+    try:
+        while True:
+            try:
+                topic, frame = client.recv_data(timeout_ms=5000)
+            except TimeoutError:
+                continue
+            if topic != "data" or frame.get("type") != "thd_point":
+                if topic in ("done", "error"):
+                    break
+                continue
+            thd    = frame["thd_pct"]
+            thdn   = frame["thdn_pct"]
+            in_dbu = frame.get("in_dbu")
+            gain   = frame.get("gain_db")
+            xr     = f"  xruns:{frame['xruns']}" if frame.get("xruns") else ""
+
+            if thd < 0.01:   col = "\033[32m"
+            elif thd < 0.1:  col = "\033[33m"
+            else:             col = "\033[31m"
+            rst = "\033[0m"
+
+            gain_s = f"{gain:+.2f}dB" if gain is not None else "  -"
+            dbu_s  = f"{in_dbu:>+7.2f} dBu  " if in_dbu is not None else ""
+            print(f"  {dbu_s}gain:{gain_s}  "
+                  f"THD:{col}{thd:>8.4f}%{rst}  "
+                  f"THD+N:{thdn:>8.4f}%{xr}",
+                  end="\r", flush=True)
+    except KeyboardInterrupt:
+        client.send_cmd({"cmd": "stop"})
+        print("\n\n  Stopped.")
 
 
-def cmd_monitor_spectrum(cmd, cfg):
-    _require_jack()
+def cmd_monitor_spectrum(cmd, cfg, client):
+    import matplotlib.pyplot as plt
+
     freq     = cmd["freq"]
-    cal      = _load_cal(cfg, freq)
-    level_db = _level_to_dbfs(cmd["level"], cal)
-    _print_ports(cfg)
-    jack_monitor_spectrum(cfg, freq, level_db, cal=cal, interval=cmd["interval"])
+    cal_info = _get_cal(client, freq)
+    level_db = _level_to_dbfs(cmd["level"], cal_info)
+
+    ack = _check_ack(client.send_cmd({
+        "cmd":        "monitor_spectrum",
+        "freq_hz":    freq,
+        "level_dbfs": level_db,
+        "interval":   cmd["interval"],
+    }))
+    print(f"  {freq:.0f} Hz  |  {level_db:.1f} dBFS  |  Ctrl+C to stop\n")
+
+    _BG    = "#0e1117"
+    _PANEL = "#161b22"
+    _GRID  = "#222222"
+    _TEXT  = "#aaaaaa"
+    _TITLE = "#dddddd"
+    _SPINE = "#333333"
+    _BLUE  = "#4a9eff"
+    _RED   = "#e74c3c"
+
+    plt.ion()
+    fig, ax = plt.subplots(figsize=(13, 5), facecolor=_BG)
+    try:
+        fig.canvas.manager.set_window_title(f"ac — {client._host}")
+    except Exception:
+        pass
+    ax.set_facecolor(_PANEL)
+    ax.set_xscale("log")
+    ax.set_xlim(20, 24000)
+    ax.set_ylim(-140, 10)
+    ax.set_xlabel("Frequency (Hz)", color=_TEXT)
+    ax.set_ylabel("Level (dBFS)",   color=_TEXT)
+    ax.tick_params(colors=_TEXT)
+    ax.grid(True, color=_GRID, linestyle="--", alpha=0.5)
+    for sp in ax.spines.values():
+        sp.set_edgecolor(_SPINE)
+
+    (line,)   = ax.plot([], [], color=_BLUE, linewidth=0.8)
+    title_obj = ax.set_title("  connecting...", color=_TITLE)
+    vlines    = []
+    _cur_sr   = [None]
+
+    fig.subplots_adjust(left=0.07, right=0.98, top=0.88, bottom=0.12)
+
+    line.set_visible(False)
+    title_obj.set_visible(False)
+    fig.canvas.draw()
+    _bg = [fig.canvas.copy_from_bbox(fig.bbox)]
+    line.set_visible(True)
+    title_obj.set_visible(True)
+    fig.canvas.flush_events()
+
+    def _blit():
+        fig.canvas.restore_region(_bg[0])
+        ax.draw_artist(line)
+        for vl in vlines:
+            ax.draw_artist(vl)
+        ax.draw_artist(title_obj)
+        fig.canvas.blit(fig.bbox)
+        fig.canvas.flush_events()
+
+    try:
+        while plt.fignum_exists(fig.number):
+            try:
+                topic, frame = client.recv_data(timeout_ms=2000)
+            except TimeoutError:
+                title_obj.set_text("  waiting for server...")
+                _blit()
+                continue
+            if topic not in ("data",):
+                break
+            if frame.get("type") != "spectrum":
+                continue
+
+            sr = frame.get("sr", 48000)
+            if sr != _cur_sr[0]:
+                for vl in vlines:
+                    vl.remove()
+                vlines.clear()
+                for i in range(10):
+                    hf = freq * (i + 1)
+                    if hf >= sr / 2:
+                        break
+                    vlines.append(ax.axvline(hf, color=_RED, linestyle="--",
+                                             linewidth=0.7, alpha=0.5))
+                ax.set_xlim(20, sr / 2)
+                line.set_visible(False)
+                title_obj.set_visible(False)
+                fig.canvas.draw()
+                _bg[0] = fig.canvas.copy_from_bbox(fig.bbox)
+                line.set_visible(True)
+                title_obj.set_visible(True)
+                _cur_sr[0] = sr
+
+            freqs_a = np.array(frame["freqs"])
+            spec_db = 20.0 * np.log10(np.maximum(np.array(frame["spectrum"]), 1e-12))
+            line.set_xdata(freqs_a)
+            line.set_ydata(spec_db)
+
+            in_dbu_s = (f"  |  {frame['in_dbu']:+.2f} dBu"
+                        if frame.get("in_dbu") is not None else "")
+            clip_s   = "  [CLIP]" if frame.get("clipping") else ""
+            title_obj.set_text(
+                f"{freq:.0f} Hz{in_dbu_s}  |  "
+                f"THD: {frame['thd_pct']:.4f}%  |  "
+                f"THD+N: {frame['thdn_pct']:.4f}%{clip_s}"
+            )
+            _blit()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        client.send_cmd({"cmd": "stop"})
+        plt.close(fig)
+        print("\n\n  Stopped.")
 
 
-def cmd_generate_sine(cmd, cfg):
-    _require_jack()
+def cmd_generate_sine(cmd, cfg, client):
     from .conversions import fmt_vrms, fmt_vpp
     from .parse import _parse_channels
 
     freq    = cmd["freq"]
     level   = cmd["level"]
-    playback, _ = find_ports()
+    ch_spec = cmd.get("channels")
 
-    # Channel spec: explicit arg from parser, or fall back to configured output
-    ch_spec  = cmd.get("channels")
-    channels = _parse_channels(ch_spec) if ch_spec is not None else [cfg["output_channel"]]
+    # Fetch server config to know which channels + calibration
+    ack_status = client.send_cmd({"cmd": "status"})
+    ack_setup  = client.send_cmd({"cmd": "setup", "update": {}})
+    srv_cfg    = (ack_setup or {}).get("config", {}) if ack_setup else {}
 
-    # Resolve level and show per-channel info (each channel may have its own cal)
-    out_ports = []
+    channels   = _parse_channels(ch_spec) if ch_spec is not None else [srv_cfg.get("output_channel", 0)]
+
+    # Show per-channel info
     print()
+    first_dbfs = None
     for ch in channels:
-        cal   = Calibration.load_output_only(output_channel=ch, freq=freq)
-        vrms  = _level_to_vrms(level, cal)
-        dbfs  = max(-60.0, min(-0.5, _level_to_dbfs(level, cal)))
-        pname = port_name(playback, ch)
-        out_ports.append((pname, dbfs))
-        cal_tag = (f"{vrms_to_dbu(vrms):+.2f} dBu"
-                   if cal and cal.output_ok else f"{dbfs:.1f} dBFS (uncal)")
-        print(f"  ch {ch:>3}  {pname:<32}  {freq:.0f} Hz  {fmt_vrms(vrms):>14}  {cal_tag}")
+        cal_ack = client.send_cmd({
+            "cmd":            "get_calibration",
+            "output_channel": ch,
+            "freq_hz":        freq,
+        })
+        cal_info = cal_ack if (cal_ack and cal_ack.get("found")) else None
+        dbfs = _level_to_dbfs(level, cal_info)
+        if first_dbfs is None:
+            first_dbfs = dbfs
+        v_out = (cal_info["vrms_at_0dbfs_out"] if cal_info else None)
+        if v_out:
+            vrms    = v_out * 10.0 ** (dbfs / 20.0)
+            cal_tag = f"{vrms_to_dbu(vrms):+.2f} dBu"
+        else:
+            vrms    = None
+            cal_tag = f"{dbfs:.1f} dBFS (uncal)"
+        vrms_s = fmt_vrms(vrms) if vrms else "  -"
+        print(f"  ch {ch:>3}  {freq:.0f} Hz  {vrms_s:>14}  {cal_tag}")
 
-    # Engine plays one tone -- use first channel's dBFS as amplitude reference
-    amplitude = 10.0 ** (out_ports[0][1] / 20.0)
-    hw_ports  = [p for p, _ in out_ports]
+    if first_dbfs is None:
+        first_dbfs = -12.0
 
     print(f"\n  Playing {len(channels)} channel(s)... Ctrl+C to stop.\n")
 
-    engine = JackEngine()
-    engine.set_tone(freq, amplitude)
-    engine.start(output_ports=hw_ports)
-    try:
-        import threading
-        threading.Event().wait()
-    except KeyboardInterrupt:
-        pass
-    finally:
-        engine.set_silence()
-        engine.stop()
-        print("\n  Stopped.")
-
-
-def cmd_server(cmd, cfg):
-    _require_jack()
-    from .server import run_server, DEFAULT_PORT
-    freq     = cmd["freq"]
-    cal      = _load_cal(cfg, freq)
-    level_db = _level_to_dbfs(cmd["level"], cal)
-    _print_ports(cfg)
-    run_server(cfg, freq, level_db, cal=cal,
-               interval=cmd["interval"],
-               zmq_port=cfg.get("zmq_port", DEFAULT_PORT))
-
-
-def cmd_remote(cmd, cfg):
-    from .remote import run_remote
-    from .server import DEFAULT_PORT
-    run_remote(cmd["host"], zmq_port=cfg.get("zmq_port", DEFAULT_PORT))
-
-
-def cmd_monitor_level(cmd, cfg):
-    _require_jack()
-    from .conversions import fmt_vrms
-    from .analysis import analyze
-    from .constants import DURATION
-
-    freq     = cmd["freq"]
-    cal      = _load_cal(cfg, freq)
-    vrms_out = _level_to_vrms(cmd["level"], cal)
-    dbfs     = max(-60.0, min(-0.5, _level_to_dbfs(cmd["level"], cal)))
-
-    playback, capture = find_ports()
-    out_port = port_name(playback, cfg["output_channel"])
-    in_port  = port_name(capture,  cfg["input_channel"])
-    print(f"  Output: ch {cfg['output_channel']}  ({out_port})")
-    print(f"  Input:  ch {cfg['input_channel']}  ({in_port})")
-    print(f"  Tone: {freq:.0f} Hz  |  {fmt_vrms(vrms_out)}  =  {vrms_to_dbu(vrms_out):+.2f} dBu"
-          f"  ({dbfs:.1f} dBFS)")
-    print(f"\n  Ctrl+C to stop.\n")
-
-    engine       = JackEngine()
-    engine.set_tone(freq, 10.0 ** (dbfs / 20.0))
-    engine.start(output_ports=out_port, input_port=in_port)
-    duration     = max(DURATION, cmd["interval"])
-    update_every = max(1, round(cmd["interval"] / DURATION))
-    block        = 0
+    ack = _check_ack(client.send_cmd({
+        "cmd":        "generate",
+        "freq_hz":    freq,
+        "level_dbfs": first_dbfs,
+        "channels":   channels,
+    }))
 
     try:
         while True:
-            data  = engine.capture_block(duration)
-            block += 1
-            if block % update_every != 0:
+            time.sleep(0.1)
+    except KeyboardInterrupt:
+        client.send_cmd({"cmd": "stop"})
+        print("\n  Stopped.")
+
+
+def cmd_monitor_level(cmd, cfg, client):
+    freq     = cmd["freq"]
+    cal_info = _get_cal(client, freq)
+    level_db = _level_to_dbfs(cmd["level"], cal_info)
+
+    ack = _check_ack(client.send_cmd({
+        "cmd":        "monitor_thd",
+        "freq_hz":    freq,
+        "level_dbfs": level_db,
+        "interval":   cmd["interval"],
+    }))
+    print(f"  {freq:.0f} Hz  |  {level_db:.1f} dBFS  |  Ctrl+C to stop\n")
+
+    try:
+        while True:
+            try:
+                topic, frame = client.recv_data(timeout_ms=5000)
+            except TimeoutError:
                 continue
-            rec = data.reshape(-1, 1)
-            r   = analyze(rec, sr=engine.samplerate, fundamental=freq)
-            if "error" in r:
-                print(f"  !! {r['error']}", end="\r")
+            if topic == "done" or topic == "error":
+                break
+            if topic != "data" or frame.get("type") != "thd_point":
                 continue
-            in_vrms = cal.in_vrms(r["linear_rms"]) if (cal and cal.input_ok) else None
-            in_dbu  = vrms_to_dbu(in_vrms) if in_vrms else None
-            if in_vrms and cal and cal.input_ok:
-                delta = in_dbu - vrms_to_dbu(vrms_out)
-                col   = "\033[32m" if abs(delta) < 0.1 else "\033[33m" if abs(delta) < 0.5 else "\033[31m"
-                print(f"  In: {fmt_vrms(in_vrms):>12}  {in_dbu:>+7.2f} dBu  {col}{delta:+.2f} dB\033[0m",
+            in_dbu  = frame.get("in_dbu")
+            out_dbu = frame.get("out_dbu")
+            gain_db = frame.get("gain_db")
+            dbfs    = frame.get("fundamental_dbfs", 0)
+            if in_dbu is not None:
+                delta = gain_db if gain_db is not None else 0.0
+                col = "\033[32m" if abs(delta) < 0.1 else "\033[33m" if abs(delta) < 0.5 else "\033[31m"
+                rst = "\033[0m"
+                print(f"  In: {in_dbu:>+7.2f} dBu  {col}{delta:+.2f} dB{rst}",
                       end="\r", flush=True)
             else:
-                print(f"  In: {r['fundamental_dbfs']:>+7.2f} dBFS", end="\r", flush=True)
+                print(f"  In: {dbfs:>+7.2f} dBFS", end="\r", flush=True)
     except KeyboardInterrupt:
-        engine.set_silence()
-        engine.stop()
+        client.send_cmd({"cmd": "stop"})
         print("\n\n  Stopped.")
+
+
+def cmd_server_enable(_cmd, cfg, client):
+    """Start the ZMQ server daemon — this is handled before AcClient is created."""
+    # Should not reach here; handled in main() before client init.
+    from .server import run_server, CTRL_PORT, DATA_PORT
+    run_server(ctrl_port=cfg.get("zmq_ctrl_port", CTRL_PORT),
+               data_port=cfg.get("zmq_data_port", DATA_PORT))
+
+
+def cmd_server_set_host(cmd, cfg, client):
+    """Save server host to local config — also handled before AcClient."""
+    # Should not reach here; handled in main().
+    pass
 
 
 # ---------------------------------------------------------------------------
@@ -394,11 +820,9 @@ HANDLERS = {
     "sweep_level":      cmd_sweep_level,
     "sweep_frequency":  cmd_sweep_frequency,
     "monitor_thd":      cmd_monitor_thd,
-    "monitor_level":    cmd_monitor_level,
     "monitor_spectrum": cmd_monitor_spectrum,
     "generate_sine":    cmd_generate_sine,
-    "server":           cmd_server,
-    "remote":           cmd_remote,
+    "monitor_level":    cmd_monitor_level,
 }
 
 
@@ -422,9 +846,37 @@ def main():
     from .conversions import set_dbu_ref
     set_dbu_ref(cfg.get("dbu_ref_vrms", 0.77459667))
 
-    handler = HANDLERS.get(cmd["cmd"])
-    if handler is None:
-        print(f"  error: no handler for {cmd['cmd']!r}", file=sys.stderr)
-        sys.exit(1)
+    # --- Commands that don't need a ZMQ connection ---
+    if cmd["cmd"] == "server_enable":
+        from .server import run_server
+        run_server(ctrl_port=cfg.get("zmq_ctrl_port", CTRL_PORT),
+                   data_port=cfg.get("zmq_data_port", DATA_PORT))
+        return
 
-    handler(cmd, cfg)
+    if cmd["cmd"] == "server_set_host":
+        host = cmd["host"]
+        save_config({"server_host": host})
+        print(f"  Server host set to: {host}")
+        print(f"  All ac commands will now route through tcp://{host}:{CTRL_PORT}")
+        return
+
+    # DMM show is local (connects to DMM directly)
+    if cmd["cmd"] == "dmm_show":
+        cmd_dmm_show(cmd, cfg, client=None)
+        return
+
+    # --- All other commands route through ZMQ ---
+    host = cfg.get("server_host", "localhost")
+    ctrl_port = cfg.get("zmq_ctrl_port", CTRL_PORT)
+    data_port = cfg.get("zmq_data_port", DATA_PORT)
+
+    client = AcClient(host=host, ctrl_port=ctrl_port, data_port=data_port)
+    try:
+        _ensure_server(client)
+        handler = HANDLERS.get(cmd["cmd"])
+        if handler is None:
+            print(f"  error: no handler for {cmd['cmd']!r}", file=sys.stderr)
+            sys.exit(1)
+        handler(cmd, cfg, client)
+    finally:
+        client.close()
