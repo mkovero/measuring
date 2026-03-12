@@ -416,6 +416,7 @@ def run_server(ctrl_port=CTRL_PORT, data_port=DATA_PORT, local=False):
 
         if name == "stop":
             stop_ev.set()
+            cal_q.put(None)   # unblock calibration worker if it's waiting
             if worker[0]:
                 worker[0].join(timeout=5.0)
             running_cmd[0] = None

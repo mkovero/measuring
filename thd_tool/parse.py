@@ -162,6 +162,8 @@ ABBREVS = {
     "ls": "list",
     # dmm
     "dmm": "dmm",
+    # stop
+    "stop": "stop", "st": "stop",
     # setup / devices
     "se": "setup", "set": "setup",
     "d": "devices", "dev": "devices", "devs": "devices",
@@ -334,6 +336,9 @@ def parse(argv):
         result["freq"]  = freq  or 1000.0
         result["level"] = level or ("dbfs", -10.0)
         return result
+
+    elif verb == "stop":
+        return {"cmd": "stop"}
 
     elif verb == "dmm":
         # ac dmm [show]  -- read AC Vrms from configured DMM

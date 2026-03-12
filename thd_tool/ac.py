@@ -272,25 +272,61 @@ def _collect_stream(client, cmd_name, on_data, timeout_ms=60000):
 # Command handlers
 # ---------------------------------------------------------------------------
 
+_FF400_PLAY = (
+    "ADAT1 ADAT2 ADAT3 ADAT4 ADAT5 ADAT6 ADAT7 ADAT8 "
+    "SPDIF-L SPDIF-R AN1 AN2 AN3 AN4 AN5 AN6 AN7 AN8"
+).split()
+_FF400_CAP = (
+    "ADAT1 ADAT2 ADAT3 ADAT4 ADAT5 ADAT6 ADAT7 ADAT8 "
+    "SPDIF-L SPDIF-R AN1 AN2 AN3 AN4 AN5 AN6 AN7 AN8"
+).split()
+
+_KNOWN_LAYOUTS = {
+    "Fireface400": (_FF400_PLAY, _FF400_CAP),
+}
+
+def _detect_card_name():
+    try:
+        with open("/proc/asound/cards") as f:
+            for line in f:
+                for name in _KNOWN_LAYOUTS:
+                    if name in line:
+                        return name
+    except OSError:
+        pass
+    return None
+
+
 def cmd_devices(_cmd, cfg, client):
     ack = _check_ack(client.send_cmd({"cmd": "devices"}), "devices")
     playback = ack.get("playback", [])
     capture  = ack.get("capture",  [])
     out_ch   = ack.get("output_channel", 0)
     in_ch    = ack.get("input_channel",  0)
+
+    card = _detect_card_name()
+    hw_play, hw_cap = _KNOWN_LAYOUTS.get(card, (None, None))
+
+    def hw(names, i):
+        if names and i < len(names):
+            return f"  [{names[i]}]"
+        return ""
+
     print("\n  JACK ports:")
     print(f"  Configured:  output ch {out_ch}  ->  "
-          f"{playback[out_ch] if out_ch < len(playback) else '??'}")
+          f"{playback[out_ch] if out_ch < len(playback) else '??'}"
+          f"{hw(hw_play, out_ch)}")
     print(f"               input  ch {in_ch}  ->  "
-          f"{capture[in_ch] if in_ch < len(capture) else '??'}")
+          f"{capture[in_ch] if in_ch < len(capture) else '??'}"
+          f"{hw(hw_cap, in_ch)}")
     print("\n  Playback:")
     for i, p in enumerate(playback):
         mark = "  <--" if i == out_ch else ""
-        print(f"    {i:>3}  {p}{mark}")
+        print(f"    {i:>3}  {p}{hw(hw_play, i)}{mark}")
     print("\n  Capture:")
     for i, p in enumerate(capture):
         mark = "  <--" if i == in_ch else ""
-        print(f"    {i:>3}  {p}{mark}")
+        print(f"    {i:>3}  {p}{hw(hw_cap, i)}{mark}")
     print()
 
 
@@ -314,6 +350,14 @@ def cmd_setup(cmd, cfg, client):
     if update:
         print("  Saved.")
     print()
+
+
+def cmd_stop(_cmd, cfg, client):
+    ack = client.send_cmd({"cmd": "stop"})
+    if ack.get("ok"):
+        print("  Stopped.")
+    else:
+        print(f"  {ack.get('error', 'unknown error')}")
 
 
 def cmd_dmm_show(_cmd, cfg, client):
@@ -794,6 +838,7 @@ def cmd_server_set_host(cmd, cfg, client):
 HANDLERS = {
     "devices":          cmd_devices,
     "setup":            cmd_setup,
+    "stop":             cmd_stop,
     "dmm_show":         cmd_dmm_show,
     "calibrate":        cmd_calibrate,
     "calibrate_show":   cmd_calibrate_show,
