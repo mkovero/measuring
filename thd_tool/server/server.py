@@ -440,12 +440,18 @@ def run_server(ctrl_port=CTRL_PORT, data_port=DATA_PORT, local=False):
             return {"ok": True}
 
         if name == "stop":
-            for w in workers.values():
-                w["stop"].set()
-            cal_q.put(None)   # unblock calibration worker if it's waiting
-            for w in workers.values():
-                w["thread"].join(timeout=5.0)
-            workers.clear()
+            target = cmd.get("name")
+            if target and target in workers:
+                workers[target]["stop"].set()
+                workers[target]["thread"].join(timeout=5.0)
+                del workers[target]
+            else:
+                for w in workers.values():
+                    w["stop"].set()
+                cal_q.put(None)   # unblock calibration worker if it's waiting
+                for w in workers.values():
+                    w["thread"].join(timeout=5.0)
+                workers.clear()
             return {"ok": True}
 
         if name == "cal_reply":

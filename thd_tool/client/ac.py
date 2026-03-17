@@ -671,7 +671,7 @@ def cmd_monitor_thd(cmd, cfg, client):
                   f"THD+N:{thdn:>8.4f}%{xr}",
                   end="\r", flush=True)
     except KeyboardInterrupt:
-        client.send_cmd({"cmd": "stop"})
+        client.send_cmd({"cmd": "stop", "name": "monitor_thd"})
         print("\n\n  Stopped.")
 
 
@@ -740,7 +740,7 @@ def cmd_monitor_spectrum(cmd, cfg, client):
     except KeyboardInterrupt:
         pass
     finally:
-        client.send_cmd({"cmd": "stop"})
+        client.send_cmd({"cmd": "stop", "name": "monitor_spectrum"})
         sys.stdout.write("\033[?25h\033[2J\033[H")
         sys.stdout.flush()
         if error_msg:
@@ -812,7 +812,7 @@ def cmd_generate_sine(cmd, cfg, client):
             if topic == "done":
                 return
     except KeyboardInterrupt:
-        client.send_cmd({"cmd": "stop"})
+        client.send_cmd({"cmd": "stop", "name": "generate"})
         print("\n  Stopped.")
 
 
@@ -874,7 +874,7 @@ def cmd_generate_pink(cmd, cfg, client):
             if topic == "done":
                 return
     except KeyboardInterrupt:
-        client.send_cmd({"cmd": "stop"})
+        client.send_cmd({"cmd": "stop", "name": "generate_pink"})
         print("\n  Stopped.")
 
 
@@ -906,7 +906,7 @@ def cmd_monitor_level(cmd, cfg, client):
             else:
                 print(f"  In: {dbfs:>+7.2f} dBFS", end="\r", flush=True)
     except KeyboardInterrupt:
-        client.send_cmd({"cmd": "stop"})
+        client.send_cmd({"cmd": "stop", "name": "monitor_thd"})
         print("\n\n  Stopped.")
 
 
