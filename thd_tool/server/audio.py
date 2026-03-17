@@ -107,6 +107,21 @@ class JackEngine:
             self._tone     = tone
             self._tone_pos = 0
 
+    def set_pink_noise(self, amplitude):
+        n     = self._sr   # 1-second buffer
+        white = np.random.randn(n).astype(np.float32)
+        fft   = np.fft.rfft(white)
+        freqs = np.fft.rfftfreq(n, 1.0 / self._sr)
+        freqs[0] = 1.0   # avoid division by zero at DC
+        fft  /= np.sqrt(freqs)
+        pink  = np.fft.irfft(fft, n=n).astype(np.float32)
+        peak  = np.max(np.abs(pink))
+        if peak > 0:
+            pink *= amplitude / peak
+        with self._tone_lock:
+            self._tone     = pink
+            self._tone_pos = 0
+
     def set_silence(self):
         with self._tone_lock:
             self._tone     = np.zeros(self._blocksize, dtype=np.float32)

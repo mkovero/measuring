@@ -24,6 +24,12 @@ _SRC_MTIME = max(
 CTRL_PORT = 5556
 DATA_PORT  = 5557
 
+# Concurrency classification
+OUTPUT_CMDS = {"generate", "generate_pink"}
+INPUT_CMDS  = {"monitor_thd", "monitor_spectrum"}
+EXCLUSIVE   = {"sweep_level", "sweep_frequency", "calibrate"}
+AUDIO_CMDS  = OUTPUT_CMDS | INPUT_CMDS | EXCLUSIVE
+
 
 # ---------------------------------------------------------------------------
 # Internal helpers
@@ -183,33 +189,24 @@ def _worker_sweep_frequency(pub_q, stop_ev, cfg, cmd):
 
 
 def _worker_monitor_thd(pub_q, stop_ev, cfg, cmd):
-    freq       = cmd["freq_hz"]
-    level_dbfs = cmd["level_dbfs"]
-    interval   = cmd.get("interval", 1.0)
-    cal        = Calibration.load(output_channel=cfg["output_channel"],
-                                  input_channel=cfg["input_channel"],
-                                  freq=freq)
-    amplitude = 10.0 ** (level_dbfs / 20.0)
-    duration  = max(0.1, interval)
-
-    out_port  = cmd["_out_port"]
-    in_port   = cmd["_in_port"]
+    freq     = cmd["freq_hz"]
+    interval = cmd.get("interval", 1.0)
+    cal      = Calibration.load(output_channel=cfg["output_channel"],
+                                input_channel=cfg["input_channel"],
+                                freq=freq)
+    duration = max(0.1, interval)
+    in_port  = cmd["_in_port"]
     engine = JackEngine()
     try:
-        engine.start(output_ports=out_port, input_port=in_port)
-        engine.set_tone(freq, amplitude)
+        engine.start(input_port=in_port)
         while not stop_ev.is_set():
             data = engine.capture_block(duration)
             rec  = data.reshape(-1, 1)
             r    = analyze(rec, sr=engine.samplerate, fundamental=freq)
             if "error" in r:
                 continue
-            in_vrms  = cal.in_vrms(r["linear_rms"])    if (cal and cal.input_ok)  else None
-            in_dbu   = vrms_to_dbu(in_vrms)            if in_vrms is not None     else None
-            out_vrms = cal.out_vrms(level_dbfs)        if (cal and cal.output_ok) else None
-            out_dbu  = vrms_to_dbu(out_vrms)           if out_vrms is not None    else None
-            gain_db  = (in_dbu - out_dbu
-                        if in_dbu is not None and out_dbu is not None else None)
+            in_vrms = cal.in_vrms(r["linear_rms"]) if (cal and cal.input_ok) else None
+            in_dbu  = vrms_to_dbu(in_vrms)         if in_vrms is not None    else None
             _pub(pub_q, "data", {
                 "type":              "thd_point",
                 "cmd":               "monitor_thd",
@@ -218,8 +215,6 @@ def _worker_monitor_thd(pub_q, stop_ev, cfg, cmd):
                 "thdn_pct":          float(r["thdn_pct"]),
                 "fundamental_dbfs":  float(r["fundamental_dbfs"]),
                 "in_dbu":            in_dbu,
-                "out_dbu":           out_dbu,
-                "gain_db":           gain_db,
                 "clipping":          bool(r.get("clipping", False)),
                 "xruns":             engine.xruns,
             })
@@ -227,27 +222,21 @@ def _worker_monitor_thd(pub_q, stop_ev, cfg, cmd):
         _pub(pub_q, "error", {"cmd": "monitor_thd", "message": str(e)})
         return
     finally:
-        engine.set_silence()
         engine.stop()
     _pub(pub_q, "done", {"cmd": "monitor_thd"})
 
 
 def _worker_monitor_spectrum(pub_q, stop_ev, cfg, cmd):
-    freq       = cmd["freq_hz"]
-    level_dbfs = cmd["level_dbfs"]
-    interval   = cmd.get("interval", 0.2)
-    cal        = Calibration.load(output_channel=cfg["output_channel"],
-                                  input_channel=cfg["input_channel"],
-                                  freq=freq)
-    amplitude = 10.0 ** (level_dbfs / 20.0)
-    duration  = max(0.05, interval)
-
-    out_port  = cmd["_out_port"]
-    in_port   = cmd["_in_port"]
+    freq     = cmd["freq_hz"]
+    interval = cmd.get("interval", 0.2)
+    cal      = Calibration.load(output_channel=cfg["output_channel"],
+                                input_channel=cfg["input_channel"],
+                                freq=freq)
+    duration = max(0.05, interval)
+    in_port  = cmd["_in_port"]
     engine = JackEngine()
     try:
-        engine.start(output_ports=out_port, input_port=in_port)
-        engine.set_tone(freq, amplitude)
+        engine.start(input_port=in_port)
         while not stop_ev.is_set():
             data = engine.capture_block(duration)
             rec  = data.reshape(-1, 1)
@@ -274,7 +263,6 @@ def _worker_monitor_spectrum(pub_q, stop_ev, cfg, cmd):
         _pub(pub_q, "error", {"cmd": "monitor_spectrum", "message": str(e)})
         return
     finally:
-        engine.set_silence()
         engine.stop()
     _pub(pub_q, "done", {"cmd": "monitor_spectrum"})
 
@@ -299,6 +287,27 @@ def _worker_generate(pub_q, stop_ev, cfg, cmd):
             engine.set_silence()
             engine.stop()
     _pub(pub_q, "done", {"cmd": "generate"})
+
+
+def _worker_generate_pink(pub_q, stop_ev, cfg, cmd):
+    level_dbfs = cmd["level_dbfs"]
+    amplitude  = 10.0 ** (level_dbfs / 20.0)
+    out_ports  = cmd["_out_ports"]
+
+    engine = None
+    try:
+        engine = JackEngine()
+        engine.set_pink_noise(amplitude)
+        engine.start(output_ports=out_ports)
+        stop_ev.wait()
+    except Exception as e:
+        _pub(pub_q, "error", {"cmd": "generate_pink", "message": str(e)})
+        return
+    finally:
+        if engine is not None:
+            engine.set_silence()
+            engine.stop()
+    _pub(pub_q, "done", {"cmd": "generate_pink"})
 
 
 def _worker_calibrate(pub_q, stop_ev, cal_q, cfg, cmd):
@@ -380,10 +389,8 @@ def run_server(ctrl_port=CTRL_PORT, data_port=DATA_PORT, local=False):
 
     pub_q       = queue.Queue()
     cal_q       = queue.Queue()
-    stop_ev     = threading.Event()
     should_quit = [False]
-    worker      = [None]        # [Thread or None]
-    running_cmd = [None]        # [str or None]
+    workers     = {}   # {cmd_name: {"thread": Thread, "stop": Event}}
     cfg         = load_config()
 
     def _drain_pub():
@@ -393,33 +400,52 @@ def run_server(ctrl_port=CTRL_PORT, data_port=DATA_PORT, local=False):
             except queue.Empty:
                 break
 
-    def _is_busy():
-        return worker[0] is not None and worker[0].is_alive()
+    def _cleanup_workers():
+        dead = [n for n, w in list(workers.items()) if not w["thread"].is_alive()]
+        for n in dead:
+            del workers[n]
 
-    def _spawn(target, *args):
-        stop_ev.clear()
-        t = threading.Thread(target=target, args=args, daemon=True)
+    def _can_start(name):
+        _cleanup_workers()
+        alive = set(workers.keys())
+        if not alive:
+            return True, None
+        if name in EXCLUSIVE or alive & EXCLUSIVE:
+            return False, f"{', '.join(alive)} running — send stop first"
+        if name in OUTPUT_CMDS and alive & OUTPUT_CMDS:
+            return False, f"{', '.join(alive & OUTPUT_CMDS)} already running — send stop first"
+        if name in INPUT_CMDS and alive & INPUT_CMDS:
+            return False, f"{', '.join(alive & INPUT_CMDS)} already running — send stop first"
+        return True, None
+
+    def _spawn(name, target, *args):
+        # args = (pub_q, *rest) — inject per-worker stop event after pub_q
+        ev = threading.Event()
+        t  = threading.Thread(target=target, args=(args[0], ev) + args[1:], daemon=True)
         t.start()
-        worker[0] = t
+        workers[name] = {"thread": t, "stop": ev}
 
     def handle(cmd):
         nonlocal cfg
         name = cmd.get("cmd", "")
 
         if name == "status":
-            return {"ok": True, "busy": _is_busy(),
-                    "running_cmd": running_cmd[0], "src_mtime": _SRC_MTIME}
+            _cleanup_workers()
+            alive = list(workers.keys())
+            return {"ok": True, "busy": bool(alive),
+                    "running_cmd": alive[0] if alive else None, "src_mtime": _SRC_MTIME}
 
         if name == "quit":
             should_quit[0] = True
             return {"ok": True}
 
         if name == "stop":
-            stop_ev.set()
+            for w in workers.values():
+                w["stop"].set()
             cal_q.put(None)   # unblock calibration worker if it's waiting
-            if worker[0]:
-                worker[0].join(timeout=5.0)
-            running_cmd[0] = None
+            for w in workers.values():
+                w["thread"].join(timeout=5.0)
+            workers.clear()
             return {"ok": True}
 
         if name == "cal_reply":
@@ -481,17 +507,15 @@ def run_server(ctrl_port=CTRL_PORT, data_port=DATA_PORT, local=False):
             except Exception as e:
                 return {"ok": False, "error": str(e)}
 
-        # --- Audio commands require JACK ---
-        if _is_busy():
-            return {"ok": False,
-                    "error": f"busy: {running_cmd[0]} running — send stop first"}
+        # --- Audio commands: concurrency check ---
+        if name in AUDIO_CMDS:
+            ok, err = _can_start(name)
+            if not ok:
+                return {"ok": False, "error": f"busy: {err}"}
 
-        # Resolve ports for all JACK commands before spawning so we can
-        # (a) validate the channel indices immediately, (b) include port
-        # names in the ack so the client can display them, and (c) avoid
-        # the workers calling find_ports() outside a try/except.
-        if name in ("sweep_level", "sweep_frequency",
-                    "monitor_thd", "monitor_spectrum"):
+        # Resolve ports before spawning so we can validate indices immediately
+        # and include port names in the ack.
+        if name in ("sweep_level", "sweep_frequency"):
             try:
                 playback, capture = find_ports()
                 out_port = port_name(playback, cfg["output_channel"])
@@ -501,31 +525,15 @@ def run_server(ctrl_port=CTRL_PORT, data_port=DATA_PORT, local=False):
             cmd["_out_port"] = out_port
             cmd["_in_port"]  = in_port
 
-        if name == "sweep_level":
-            running_cmd[0] = "sweep_level"
-            _spawn(_worker_sweep_level, pub_q, stop_ev, cfg, cmd)
-            return {"ok": True,
-                    "out_port": cmd["_out_port"], "in_port": cmd["_in_port"]}
+        if name in ("monitor_thd", "monitor_spectrum"):
+            try:
+                _, capture = find_ports()
+                in_port = port_name(capture, cfg["input_channel"])
+            except Exception as e:
+                return {"ok": False, "error": f"port error: {e}"}
+            cmd["_in_port"] = in_port
 
-        if name == "sweep_frequency":
-            running_cmd[0] = "sweep_frequency"
-            _spawn(_worker_sweep_frequency, pub_q, stop_ev, cfg, cmd)
-            return {"ok": True,
-                    "out_port": cmd["_out_port"], "in_port": cmd["_in_port"]}
-
-        if name == "monitor_thd":
-            running_cmd[0] = "monitor_thd"
-            _spawn(_worker_monitor_thd, pub_q, stop_ev, cfg, cmd)
-            return {"ok": True,
-                    "out_port": cmd["_out_port"], "in_port": cmd["_in_port"]}
-
-        if name == "monitor_spectrum":
-            running_cmd[0] = "monitor_spectrum"
-            _spawn(_worker_monitor_spectrum, pub_q, stop_ev, cfg, cmd)
-            return {"ok": True,
-                    "out_port": cmd["_out_port"], "in_port": cmd["_in_port"]}
-
-        if name == "generate":
+        if name in ("generate", "generate_pink"):
             channels = cmd.get("channels")
             try:
                 playback, _ = find_ports()
@@ -536,13 +544,41 @@ def run_server(ctrl_port=CTRL_PORT, data_port=DATA_PORT, local=False):
             except Exception as e:
                 return {"ok": False, "error": f"port error: {e}"}
             cmd["_out_ports"] = out_ports
-            running_cmd[0] = "generate"
-            _spawn(_worker_generate, pub_q, stop_ev, cfg, cmd)
-            return {"ok": True, "out_ports": out_ports}
+
+        if name == "sweep_level":
+            _spawn("sweep_level", _worker_sweep_level, pub_q, cfg, cmd)
+            return {"ok": True,
+                    "out_port": cmd["_out_port"], "in_port": cmd["_in_port"]}
+
+        if name == "sweep_frequency":
+            _spawn("sweep_frequency", _worker_sweep_frequency, pub_q, cfg, cmd)
+            return {"ok": True,
+                    "out_port": cmd["_out_port"], "in_port": cmd["_in_port"]}
+
+        if name == "monitor_thd":
+            _spawn("monitor_thd", _worker_monitor_thd, pub_q, cfg, cmd)
+            return {"ok": True, "in_port": cmd["_in_port"]}
+
+        if name == "monitor_spectrum":
+            _spawn("monitor_spectrum", _worker_monitor_spectrum, pub_q, cfg, cmd)
+            return {"ok": True, "in_port": cmd["_in_port"]}
+
+        if name == "generate":
+            _spawn("generate", _worker_generate, pub_q, cfg, cmd)
+            return {"ok": True, "out_ports": cmd["_out_ports"]}
+
+        if name == "generate_pink":
+            _spawn("generate_pink", _worker_generate_pink, pub_q, cfg, cmd)
+            return {"ok": True, "out_ports": cmd["_out_ports"]}
 
         if name == "calibrate":
-            running_cmd[0] = "calibrate"
-            _spawn(_worker_calibrate, pub_q, stop_ev, cal_q, cfg, cmd)
+            # Drain stale cal_q entries from previous stop commands
+            while not cal_q.empty():
+                try:
+                    cal_q.get_nowait()
+                except queue.Empty:
+                    break
+            _spawn("calibrate", _worker_calibrate, pub_q, cal_q, cfg, cmd)
             return {"ok": True}
 
         return {"ok": False, "error": f"unknown command: {name!r}"}
@@ -574,9 +610,11 @@ def run_server(ctrl_port=CTRL_PORT, data_port=DATA_PORT, local=False):
     except KeyboardInterrupt:
         if not local:
             print("\n\n  Stopping server...")
-        stop_ev.set()
-        if worker[0]:
-            worker[0].join(timeout=5.0)
+        for w in workers.values():
+            w["stop"].set()
+        cal_q.put(None)
+        for w in workers.values():
+            w["thread"].join(timeout=5.0)
     finally:
         sock_ctrl.close()
         sock_data.close()

@@ -12,9 +12,10 @@
 # Grammar:
 #   ac sweep level   <start:level> <stop:level> <freq:freq> [<step:step>]
 #   ac sweep freq    <start:freq>  <stop:freq>  <level:level> [<ppd:ppd>]
-#   ac monitor thd   <level:level> <freq:freq>  [<interval:time>]
-#   ac monitor spectrum <level:level> <freq:freq> [<interval:time>]
+#   ac monitor thd   <freq:freq>   [<interval:time>]   (input-only)
+#   ac monitor spectrum <freq:freq> [<interval:time>]  (input-only)
 #   ac generate sine <level:level> [<freq:freq>]
+#   ac generate pink <level:level>
 #   ac calibrate     [<freq:freq>] [<level:level>]
 
 import re
@@ -156,6 +157,7 @@ ABBREVS = {
     "sp": "spectrum", "spec": "spectrum",
     # generate nouns
     "si": "sine",
+    "pk": "pink",
     # show plot after command
     "sh": "show",
     # calibrate show
@@ -292,7 +294,7 @@ def parse(argv):
 
     elif verb == "generate":
         if not args:
-            raise ParseError("generate needs a noun: sine")
+            raise ParseError("generate needs a noun: sine | pink")
         noun   = _expand(args.pop(0))
         if noun == "sine":
             # Check for a channel spec before classifying tokens:
@@ -309,8 +311,20 @@ def parse(argv):
                     "level": level, "freq": freq,
                     "channels": channels,
                     "show_plot": show_plot}
+        elif noun == "pink":
+            channels = None
+            if args and re.match(r'^[\d][\d,\-]*$', args[0]):
+                channels = args.pop(0)
+            tokens = _classify_all(args)
+            level = _pull(tokens, "level", optional=True) or ("dbu", 0.0)
+            if tokens:
+                raise ParseError(f"unexpected token(s): {tokens}")
+            return {"cmd": "generate_pink",
+                    "level": level,
+                    "channels": channels,
+                    "show_plot": show_plot}
         else:
-            raise ParseError(f"unknown generate noun: {noun!r}  (sine)")
+            raise ParseError(f"unknown generate noun: {noun!r}  (sine | pink)")
 
     elif verb == "calibrate":
         # Optional channel overrides: ac calibrate [output N] [input N] [freq] [level]
@@ -403,9 +417,10 @@ ac -- audio bench tool
 
   ac sweep level   <start> <stop> <freq> [<step>]
   ac sweep frequency <start> <stop> <level> [<ppd>]
-  ac monitor thd   <level> <freq> [<interval>]
-  ac monitor spectrum <level> <freq> [<interval>]
-  ac generate sine <level> [<freq>]
+  ac monitor thd   <freq> [<interval>]       (input-only)
+  ac monitor spectrum <freq> [<interval>]    (input-only)
+  ac generate sine [<channels>] <level> [<freq>]
+  ac generate pink [<channels>] <level>
   ac calibrate     [output N] [input N] [<freq>] [<level>]
   ac calibrate show
   ac server enable          (start ZMQ server daemon on this machine)
@@ -420,9 +435,10 @@ Units:
 
 Abbreviations:
   sweep->s  monitor->m  generate->g  calibrate->c
-  level->l  frequency->f  thd->t  spectrum->sp  sine->si
+  level->l  frequency->f  thd->t  spectrum->sp  sine->si  pink->pk
 
 Notes:
+  Monitors are input-only. Use ac generate sine/pink in a second shell for output.
   dBu and Vrms levels require prior calibration (ac calibrate).
   dBFS levels work without calibration.
 
@@ -434,13 +450,15 @@ Examples:
   ac sweep frequency 20hz 20khz 0dbu
   ac sweep frequency 20hz 20khz 0dbu 20ppd
   ac s f 20hz 20khz 0dbu
-  ac monitor thd 0dbu 1khz
-  ac monitor thd 0dbu 1khz 0.2s
-  ac m t 0dbu 1khz 0.2s
-  ac monitor spectrum 0dbu 1khz
-  ac m sp -12dbfs 1khz
   ac generate sine 0dbu 1khz
   ac g si 0dbu
+  ac generate pink 0dbu
+  ac g pk -12dbfs
+  ac monitor thd 1khz
+  ac monitor thd 1khz 0.2s
+  ac m t 1khz 0.2s
+  ac monitor spectrum 1khz
+  ac m sp 1khz
   ac calibrate show
   ac calibrate 1khz
   ac calibrate output 1 input 2 1khz

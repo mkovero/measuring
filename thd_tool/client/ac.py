@@ -631,29 +631,19 @@ def cmd_sweep_frequency(cmd, cfg, client):
 
 
 def cmd_monitor_thd(cmd, cfg, client):
-    freq     = cmd["freq"]
-    cal_info = _get_cal(client, freq)
-    level    = cmd["level"]
-    # Fall back to dBFS if level is dBu but no calibration is available
-    if isinstance(level, tuple) and level[0] == "dbu" and not (
-            cal_info and cal_info.get("vrms_at_0dbfs_out")):
-        print("  No output calibration — using -12.0 dBFS")
-        level_db = -12.0
-    else:
-        level_db = _level_to_dbfs(level, cal_info)
+    freq = cmd["freq"]
 
     if cmd.get("show_plot"):
         host = cfg.get("server_host", "localhost")
         _launch_ui("thd", host=host, data_port=cfg.get("zmq_data_port", DATA_PORT))
 
     ack = _check_ack(client.send_cmd({
-        "cmd":        "monitor_thd",
-        "freq_hz":    freq,
-        "level_dbfs": level_db,
-        "interval":   cmd["interval"],
+        "cmd":      "monitor_thd",
+        "freq_hz":  freq,
+        "interval": cmd["interval"],
     }))
-    print(f"  Output: {ack['out_port']}  →  Input: {ack['in_port']}")
-    print(f"  {freq:.0f} Hz  |  {level_db:.1f} dBFS  |  Ctrl+C to stop\n")
+    print(f"  Input: {ack['in_port']}")
+    print(f"  {freq:.0f} Hz  |  Ctrl+C to stop\n")
 
     try:
         while True:
@@ -668,7 +658,6 @@ def cmd_monitor_thd(cmd, cfg, client):
             thd    = frame["thd_pct"]
             thdn   = frame["thdn_pct"]
             in_dbu = frame.get("in_dbu")
-            gain   = frame.get("gain_db")
             xr     = f"  xruns:{frame['xruns']}" if frame.get("xruns") else ""
 
             if thd < 0.01:   col = "\033[32m"
@@ -676,9 +665,8 @@ def cmd_monitor_thd(cmd, cfg, client):
             else:             col = "\033[31m"
             rst = "\033[0m"
 
-            gain_s = f"{gain:+.2f}dB" if gain is not None else "  -"
-            dbu_s  = f"{in_dbu:>+7.2f} dBu  " if in_dbu is not None else ""
-            print(f"  {dbu_s}gain:{gain_s}  "
+            dbu_s = f"{in_dbu:>+7.2f} dBu  " if in_dbu is not None else ""
+            print(f"  {dbu_s}"
                   f"THD:{col}{thd:>8.4f}%{rst}  "
                   f"THD+N:{thdn:>8.4f}%{xr}",
                   end="\r", flush=True)
@@ -692,29 +680,26 @@ def cmd_monitor_spectrum(cmd, cfg, client):
     import sys
     from .tui import SpectrumRenderer
 
-    freq     = cmd["freq"]
-    cal_info = _get_cal(client, freq)
-    level_db = _level_to_dbfs(cmd["level"], cal_info)
+    freq = cmd["freq"]
 
     if cmd.get("show_plot"):
         host = cfg.get("server_host", "localhost")
         _launch_ui("spectrum", host=host, data_port=cfg.get("zmq_data_port", DATA_PORT))
 
     ack = _check_ack(client.send_cmd({
-        "cmd":        "monitor_spectrum",
-        "freq_hz":    freq,
-        "level_dbfs": level_db,
-        "interval":   cmd["interval"],
+        "cmd":      "monitor_spectrum",
+        "freq_hz":  freq,
+        "interval": cmd["interval"],
     }))
-    print(f"  Output: {ack['out_port']}  →  Input: {ack['in_port']}")
-    print(f"  {freq:.0f} Hz  |  {level_db:.1f} dBFS  |  Ctrl+C to stop")
+    print(f"  Input: {ack['in_port']}")
+    print(f"  {freq:.0f} Hz  |  Ctrl+C to stop")
 
     renderer = SpectrumRenderer()
     sys.stdout.write("\033[?25l\033[2J")
     sys.stdout.flush()
 
     # Show something while waiting for first frame
-    sys.stdout.write(f"\033[H\033[1;37m  {freq:.0f} Hz  |  {level_db:.1f} dBFS  |  waiting for data...\033[0m")
+    sys.stdout.write(f"\033[H\033[1;37m  {freq:.0f} Hz  |  waiting for data...\033[0m")
     sys.stdout.flush()
 
     def _on_resize(*_):
@@ -831,18 +816,78 @@ def cmd_generate_sine(cmd, cfg, client):
         print("\n  Stopped.")
 
 
-def cmd_monitor_level(cmd, cfg, client):
-    freq     = cmd["freq"]
-    cal_info = _get_cal(client, freq)
-    level_db = _level_to_dbfs(cmd["level"], cal_info)
+def cmd_generate_pink(cmd, cfg, client):
+    from ..conversions import fmt_vrms
+    from .parse import _parse_channels
+
+    level   = cmd["level"]
+    ch_spec = cmd.get("channels")
+
+    ack_setup = client.send_cmd({"cmd": "setup", "update": {}})
+    srv_cfg   = (ack_setup or {}).get("config", {}) if ack_setup else {}
+
+    channels = _parse_channels(ch_spec) if ch_spec is not None else [srv_cfg.get("output_channel", 0)]
+
+    print()
+    first_dbfs = None
+    for ch in channels:
+        cal_ack = client.send_cmd({
+            "cmd":            "get_calibration",
+            "output_channel": ch,
+            "freq_hz":        1000.0,
+        })
+        cal_info = cal_ack if (cal_ack and cal_ack.get("found")) else None
+        dbfs = _level_to_dbfs(level, cal_info)
+        if first_dbfs is None:
+            first_dbfs = dbfs
+        v_out = cal_info["vrms_at_0dbfs_out"] if cal_info else None
+        if v_out:
+            vrms    = v_out * 10.0 ** (dbfs / 20.0)
+            cal_tag = f"{vrms_to_dbu(vrms):+.2f} dBu"
+        else:
+            vrms    = None
+            cal_tag = f"{dbfs:.1f} dBFS (uncal)"
+        vrms_s = fmt_vrms(vrms) if vrms else "  -"
+        print(f"  ch {ch:>3}  pink noise  {vrms_s:>14}  {cal_tag}")
+
+    if first_dbfs is None:
+        first_dbfs = -12.0
 
     ack = _check_ack(client.send_cmd({
-        "cmd":        "monitor_thd",
-        "freq_hz":    freq,
-        "level_dbfs": level_db,
-        "interval":   cmd["interval"],
+        "cmd":        "generate_pink",
+        "level_dbfs": first_dbfs,
+        "channels":   channels,
     }))
-    print(f"  {freq:.0f} Hz  |  {level_db:.1f} dBFS  |  Ctrl+C to stop\n")
+    for port in ack.get("out_ports", []):
+        print(f"  → {port}")
+    print(f"\n  Playing pink noise on {len(channels)} channel(s)... Ctrl+C to stop.\n")
+
+    try:
+        while True:
+            try:
+                topic, frame = client.recv_data(timeout_ms=500)
+            except TimeoutError:
+                continue
+            if topic == "error":
+                print(f"\n  error: {frame.get('message')}")
+                return
+            if topic == "done":
+                return
+    except KeyboardInterrupt:
+        client.send_cmd({"cmd": "stop"})
+        print("\n  Stopped.")
+
+
+def cmd_monitor_level(cmd, cfg, client):
+    freq = cmd["freq"]
+
+    ack = _check_ack(client.send_cmd({
+        "cmd":      "monitor_thd",
+        "freq_hz":  freq,
+        "interval": cmd["interval"],
+    }))
+    print(f"  Input: {ack['in_port']}")
+    print(f"  {freq:.0f} Hz  |  Ctrl+C to stop\n")
 
     try:
         while True:
@@ -854,16 +899,10 @@ def cmd_monitor_level(cmd, cfg, client):
                 break
             if topic != "data" or frame.get("type") != "thd_point":
                 continue
-            in_dbu  = frame.get("in_dbu")
-            out_dbu = frame.get("out_dbu")
-            gain_db = frame.get("gain_db")
-            dbfs    = frame.get("fundamental_dbfs", 0)
+            in_dbu = frame.get("in_dbu")
+            dbfs   = frame.get("fundamental_dbfs", 0)
             if in_dbu is not None:
-                delta = gain_db if gain_db is not None else 0.0
-                col = "\033[32m" if abs(delta) < 0.1 else "\033[33m" if abs(delta) < 0.5 else "\033[31m"
-                rst = "\033[0m"
-                print(f"  In: {in_dbu:>+7.2f} dBu  {col}{delta:+.2f} dB{rst}",
-                      end="\r", flush=True)
+                print(f"  In: {in_dbu:>+7.2f} dBu", end="\r", flush=True)
             else:
                 print(f"  In: {dbfs:>+7.2f} dBFS", end="\r", flush=True)
     except KeyboardInterrupt:
@@ -901,6 +940,7 @@ HANDLERS = {
     "monitor_thd":      cmd_monitor_thd,
     "monitor_spectrum": cmd_monitor_spectrum,
     "generate_sine":    cmd_generate_sine,
+    "generate_pink":    cmd_generate_pink,
     "monitor_level":    cmd_monitor_level,
 }
 
