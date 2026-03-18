@@ -151,6 +151,11 @@ ABBREVS = {
     "c": "calibrate", "cal": "calibrate",
     "p": "plot", "pl": "plot",
     "ser": "server",
+    # session verbs
+    "n": "new",
+    "ses": "sessions", "sess": "sessions",
+    "u": "use",
+    "df": "diff",
     # sweep nouns
     "l": "level", "lev": "level",
     "f": "frequency", "freq": "frequency",
@@ -443,8 +448,44 @@ def parse(argv):
             raise ParseError(f"unexpected token(s) after host: {args}")
         return {"cmd": "server_set_host", "host": host}
 
+    elif verb == "new":
+        if not args:
+            raise ParseError("new: requires a session name")
+        name = args.pop(0)
+        if args:
+            raise ParseError(f"new: unexpected extra args: {args}")
+        return {"cmd": "session_new", "name": name}
+
+    elif verb == "sessions":
+        return {"cmd": "session_list"}
+
+    elif verb == "use":
+        if not args:
+            raise ParseError("use: requires a session name")
+        name = args.pop(0)
+        if args:
+            raise ParseError(f"use: unexpected extra args: {args}")
+        return {"cmd": "session_use", "name": name}
+
+    elif verb == "rm":
+        if not args:
+            raise ParseError("rm: requires a session name")
+        name = args.pop(0)
+        if args:
+            raise ParseError(f"rm: unexpected extra args: {args}")
+        return {"cmd": "session_rm", "name": name}
+
+    elif verb == "diff":
+        if len(args) < 2:
+            raise ParseError("diff: requires two session names")
+        name_a = args.pop(0)
+        name_b = args.pop(0)
+        if args:
+            raise ParseError(f"diff: unexpected extra args: {args}")
+        return {"cmd": "session_diff", "name_a": name_a, "name_b": name_b}
+
     else:
-        raise ParseError(f"unknown command: {verb!r}  (sweep | monitor | plot | generate | calibrate | setup | devices | server)")
+        raise ParseError(f"unknown command: {verb!r}  (sweep | monitor | plot | generate | calibrate | setup | devices | server | new | sessions | use | rm | diff)")
 
 
 # ---------------------------------------------------------------------------
@@ -467,6 +508,13 @@ ac -- audio bench tool
   ac server connections     (show listen mode, connected clients, active workers)
   ac server [<host>]        (connect to server at host, default: localhost)
 
+Sessions (group measurement files together):
+  ac new <name>             create a new session and make it active
+  ac sessions               list all sessions with file counts
+  ac use <name>             switch active session
+  ac rm  <name>             delete session and all its files (with confirmation)
+  ac diff <nameA> <nameB>   compare most recent CSVs from two sessions
+
 Units:
   frequency : 20hz  1khz  20000hz
   level     : 0dbu  -12dbfs  775mvrms  1vrms  2vpp
@@ -477,6 +525,7 @@ Units:
 Abbreviations:
   sweep->s  monitor->m  generate->g  calibrate->c  plot->p
   level->l  frequency->f  sine->si  pink->pk
+  new->n  sessions->ses/sess  use->u  diff->df
 
 Notes:
   ac sweep is non-blocking (output only). Use ac plot for blocking measurements.
@@ -519,6 +568,12 @@ Examples:
   ac ser c                   # same, abbreviated
   ac server 192.168.1.5      # point future ac commands at that host
   ac server                  # point at localhost (default)
+
+  ac new myamp               # create session + make active
+  ac sessions                # list sessions
+  ac use myamp               # switch active session
+  ac rm  myamp_old           # delete session (with prompt)
+  ac diff myamp myamp2       # compare sessions side-by-side
 """
 
 

@@ -11,6 +11,13 @@ DEFAULT_CONFIG_PATH = os.path.expanduser("~/.config/thd_tool/config.json")
 # Some broadcast gear uses 0.7752 Vrms
 DBU_REF_EXACT = 0.77459667
 
+SESSION_BASE = os.path.expanduser("~/.local/share/thd_tool/sessions")
+
+
+def session_dir(name):
+    return os.path.join(SESSION_BASE, name)
+
+
 DEFAULTS = {
     "device":         0,
     "output_channel": 0,
@@ -21,6 +28,7 @@ DEFAULTS = {
     "range_stop_hz":  20000.0,
     "server_enabled": False,
     "gpio_port":      None,
+    "session":        None,
 }
 
 

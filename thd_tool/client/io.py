@@ -4,13 +4,18 @@ import numpy as np
 from ..conversions import fmt_vrms, vrms_to_dbu
 
 def save_csv(results, path):
-    fields = ["drive_db", "out_vrms", "out_dbu",
+    fields = ["freq_hz", "drive_db", "out_vrms", "out_dbu",
               "fundamental_dbfs", "in_vrms", "in_dbu",
               "thd_pct", "thdn_pct", "noise_floor_dbfs"]
+    rows = []
+    for r in results:
+        row = dict(r)
+        row["freq_hz"] = row.get("freq_hz") or row.get("fundamental_hz")
+        rows.append(row)
     with open(path, "w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=fields, extrasaction="ignore")
         w.writeheader()
-        w.writerows(results)
+        w.writerows(rows)
     print(f"  CSV  -> {path}")
 
 def print_summary(results, device_name, cal=None):

@@ -1,15 +1,19 @@
 # ac.py  -- client for the "ac" CLI  (routes all commands through ZMQ server)
 import os
+import re
 import sys
 import math
 import json
 import time
+import shutil
+import csv as _csv
 from datetime import datetime
 
 import numpy as np
 
 from .parse        import parse, ParseError, USAGE
 from ..config      import load as load_config, save as save_config, show as show_config
+from ..config      import session_dir, SESSION_BASE
 from .io           import save_csv, print_summary
 from .plotting     import plot_results
 from ..conversions import vrms_to_dbu, fmt_vrms
@@ -177,7 +181,8 @@ def _save_results(results, label, cal=None, cfg=None, show_plot=False,
                   host="localhost", data_port=DATA_PORT):
     ts       = datetime.now().strftime("%Y%m%d_%H%M%S")
     safe     = label.replace(" ", "_")
-    out_dir  = (cfg or {}).get("output_dir", ".")
+    active   = (cfg or {}).get("session")
+    out_dir  = session_dir(active) if active else (cfg or {}).get("output_dir", ".")
     os.makedirs(out_dir, exist_ok=True)
     csv_path  = os.path.join(out_dir, f"{safe}_{ts}.csv")
     plot_path = os.path.join(out_dir, f"{safe}_{ts}.png")
@@ -945,6 +950,212 @@ def cmd_server_set_host(cmd, cfg, client):
 
 
 # ---------------------------------------------------------------------------
+# Session commands  (filesystem only, no ZMQ)
+# ---------------------------------------------------------------------------
+
+_SESSION_NAME_RE = re.compile(r'^[a-zA-Z0-9_-]+$')
+
+
+def _validate_session_name(name):
+    if not _SESSION_NAME_RE.match(name):
+        print("  error: session name must be alphanumeric + hyphens/underscores only")
+        sys.exit(1)
+    return name
+
+
+def cmd_session_new(cmd, cfg):
+    name = _validate_session_name(cmd["name"])
+    path = session_dir(name)
+    if os.path.exists(path):
+        print(f"  error: session {name!r} already exists ({path})")
+        sys.exit(1)
+    os.makedirs(path)
+    save_config({"session": name})
+    print(f"  Session created: {path}")
+    print(f"  Active session:  {name}")
+
+
+def cmd_session_list(cmd, cfg):
+    active = cfg.get("session")
+    if not os.path.isdir(SESSION_BASE):
+        print("  No sessions yet.  Run: ac new <name>")
+        return
+    entries = sorted(e for e in os.listdir(SESSION_BASE)
+                     if os.path.isdir(os.path.join(SESSION_BASE, e)))
+    if not entries:
+        print("  No sessions yet.  Run: ac new <name>")
+        return
+    print()
+    for name in entries:
+        d = session_dir(name)
+        n_csv = sum(1 for f in os.listdir(d) if f.endswith(".csv"))
+        mark = "  <-- active" if name == active else ""
+        print(f"  {name:<30}  {n_csv} measurement(s){mark}")
+    print()
+
+
+def cmd_session_use(cmd, cfg):
+    name = _validate_session_name(cmd["name"])
+    path = session_dir(name)
+    if not os.path.isdir(path):
+        print(f"  error: session {name!r} not found — run:  ac new {name}")
+        sys.exit(1)
+    save_config({"session": name})
+    n_csv = sum(1 for f in os.listdir(path) if f.endswith(".csv"))
+    print(f"  Active session: {name}  ({n_csv} measurement(s))")
+
+
+def cmd_session_rm(cmd, cfg):
+    name = _validate_session_name(cmd["name"])
+    path = session_dir(name)
+    if not os.path.isdir(path):
+        print(f"  error: session {name!r} not found")
+        sys.exit(1)
+    files = os.listdir(path)
+    print(f"  Session: {name}  ({len(files)} file(s) in {path})")
+    try:
+        answer = input("  Delete? [y/N] ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        print("\n  Cancelled.")
+        return
+    if answer != "y":
+        print("  Cancelled.")
+        return
+    shutil.rmtree(path)
+    active = cfg.get("session")
+    if active == name:
+        save_config({"session": None})
+        print(f"  Deleted.  (was active — cleared)")
+    else:
+        print(f"  Deleted.")
+
+
+def _load_csv(path):
+    with open(path, newline="") as f:
+        return list(_csv.DictReader(f))
+
+
+def _latest_csv(session_name):
+    d = session_dir(session_name)
+    if not os.path.isdir(d):
+        print(f"  error: session {session_name!r} not found")
+        sys.exit(1)
+    csvs = sorted(f for f in os.listdir(d) if f.endswith(".csv"))
+    if not csvs:
+        print(f"  error: no CSV files in session {session_name!r}")
+        sys.exit(1)
+    return os.path.join(d, csvs[-1])
+
+
+def cmd_session_diff(cmd, cfg):
+    name_a, name_b = cmd["name_a"], cmd["name_b"]
+    path_a = _latest_csv(name_a)
+    path_b = _latest_csv(name_b)
+    rows_a = _load_csv(path_a)
+    rows_b = _load_csv(path_b)
+
+    def _floats(rows, col):
+        vals = []
+        for r in rows:
+            v = r.get(col, "").strip()
+            try:
+                vals.append(float(v))
+            except (ValueError, TypeError):
+                vals.append(None)
+        return vals
+
+    freq_a = _floats(rows_a, "freq_hz")
+    distinct_a = len({v for v in freq_a if v is not None})
+    is_freq_sweep = distinct_a > 2
+
+    if is_freq_sweep:
+        freq_b    = _floats(rows_b, "freq_hz")
+        thd_a     = _floats(rows_a, "thd_pct")
+        thdn_a    = _floats(rows_a, "thdn_pct")
+        thd_b_raw = _floats(rows_b, "thd_pct")
+        thdn_b_raw= _floats(rows_b, "thdn_pct")
+
+        # Build valid arrays for interpolation
+        fa  = np.array([f for f, t, n in zip(freq_a,  thd_a,      thdn_a)     if f and t is not None and n is not None])
+        ta  = np.array([t for f, t, n in zip(freq_a,  thd_a,      thdn_a)     if f and t is not None and n is not None])
+        na  = np.array([n for f, t, n in zip(freq_a,  thd_a,      thdn_a)     if f and t is not None and n is not None])
+        fb  = np.array([f for f, t, n in zip(freq_b,  thd_b_raw,  thdn_b_raw) if f and t is not None and n is not None])
+        tb  = np.array([t for f, t, n in zip(freq_b,  thd_b_raw,  thdn_b_raw) if f and t is not None and n is not None])
+        nb  = np.array([n for f, t, n in zip(freq_b,  thd_b_raw,  thdn_b_raw) if f and t is not None and n is not None])
+
+        # Interpolate B onto A's grid (log-freq space)
+        log_fa = np.log10(fa)
+        log_fb = np.log10(fb)
+        thd_b_interp  = np.interp(log_fa, log_fb, tb)
+        thdn_b_interp = np.interp(log_fa, log_fb, nb)
+
+        print(f"\n  Diff: {name_a}  vs  {name_b}")
+        print(f"  A: {os.path.basename(path_a)}")
+        print(f"  B: {os.path.basename(path_b)}")
+        print()
+        hdr = (f"  {'Freq':>8}  {'A THD%':>9}  {'B THD%':>9}  {'ΔTHD%':>9}"
+               f"  {'A THD+N%':>10}  {'B THD+N%':>10}  {'ΔTHD+N%':>10}")
+        print(hdr)
+        print("  " + "─" * (len(hdr) - 2))
+        d_thd_max = d_thdn_max = 0.0
+        for f, ta_v, tb_v, na_v, nb_v in zip(fa, ta, thd_b_interp, na, thdn_b_interp):
+            d_thd  = tb_v - ta_v
+            d_thdn = nb_v - na_v
+            d_thd_max  = max(d_thd_max,  abs(d_thd))
+            d_thdn_max = max(d_thdn_max, abs(d_thdn))
+            print(f"  {f:>7.0f} Hz  {ta_v:>9.4f}  {tb_v:>9.4f}  {d_thd:>+9.4f}"
+                  f"  {na_v:>10.4f}  {nb_v:>10.4f}  {d_thdn:>+10.4f}")
+        print()
+        print(f"  Max |ΔTHD|:    {d_thd_max:.4f}%")
+        print(f"  Max |ΔTHD+N|:  {d_thdn_max:.4f}%")
+        print()
+
+    else:
+        # Level sweep diff — match by drive_db
+        def _key(rows):
+            out = {}
+            for r in rows:
+                try:
+                    k = float(r.get("drive_db", "").strip())
+                    out[k] = r
+                except (ValueError, TypeError):
+                    pass
+            return out
+
+        map_a = _key(rows_a)
+        map_b = _key(rows_b)
+        drives = sorted(set(map_a) & set(map_b))
+
+        print(f"\n  Diff: {name_a}  vs  {name_b}")
+        print(f"  A: {os.path.basename(path_a)}")
+        print(f"  B: {os.path.basename(path_b)}")
+        print()
+        hdr = (f"  {'Drive':>8}  {'A THD%':>9}  {'B THD%':>9}  {'ΔTHD%':>9}"
+               f"  {'A THD+N%':>10}  {'B THD+N%':>10}  {'ΔTHD+N%':>10}")
+        print(hdr)
+        print("  " + "─" * (len(hdr) - 2))
+        d_thd_max = d_thdn_max = 0.0
+        for drive in drives:
+            try:
+                ta_v  = float(map_a[drive].get("thd_pct",  ""))
+                na_v  = float(map_a[drive].get("thdn_pct", ""))
+                tb_v  = float(map_b[drive].get("thd_pct",  ""))
+                nb_v  = float(map_b[drive].get("thdn_pct", ""))
+            except (ValueError, TypeError):
+                continue
+            d_thd  = tb_v - ta_v
+            d_thdn = nb_v - na_v
+            d_thd_max  = max(d_thd_max,  abs(d_thd))
+            d_thdn_max = max(d_thdn_max, abs(d_thdn))
+            print(f"  {drive:>7.1f} dB  {ta_v:>9.4f}  {tb_v:>9.4f}  {d_thd:>+9.4f}"
+                  f"  {na_v:>10.4f}  {nb_v:>10.4f}  {d_thdn:>+10.4f}")
+        print()
+        print(f"  Max |ΔTHD|:    {d_thd_max:.4f}%")
+        print(f"  Max |ΔTHD+N|:  {d_thdn_max:.4f}%")
+        print()
+
+
+# ---------------------------------------------------------------------------
 # Dispatch table
 # ---------------------------------------------------------------------------
 
@@ -993,6 +1204,17 @@ def main():
         save_config({"server_host": host})
         print(f"  Server host set to: {host}")
         print(f"  All ac commands will now route through tcp://{host}:{CTRL_PORT}")
+        return
+
+    SESSION_CMDS = {
+        "session_new":  cmd_session_new,
+        "session_list": cmd_session_list,
+        "session_use":  cmd_session_use,
+        "session_rm":   cmd_session_rm,
+        "session_diff": cmd_session_diff,
+    }
+    if cmd["cmd"] in SESSION_CMDS:
+        SESSION_CMDS[cmd["cmd"]](cmd, cfg)
         return
 
     # --- All other commands route through ZMQ ---
