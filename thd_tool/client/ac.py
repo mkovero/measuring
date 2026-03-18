@@ -651,9 +651,9 @@ def cmd_monitor_thd(cmd, cfg, client):
                 topic, frame = client.recv_data(timeout_ms=5000)
             except TimeoutError:
                 continue
+            if topic in ("done", "error") and frame.get("cmd") in (None, "monitor_thd"):
+                break
             if topic != "data" or frame.get("type") != "thd_point":
-                if topic in ("done", "error"):
-                    break
                 continue
             thd    = frame["thd_pct"]
             thdn   = frame["thdn_pct"]
@@ -714,11 +714,13 @@ def cmd_monitor_spectrum(cmd, cfg, client):
                 topic, frame = client.recv_data(timeout_ms=2000)
             except TimeoutError:
                 continue
-            if topic == "error":
+            if topic == "error" and frame.get("cmd") in (None, "monitor_spectrum"):
                 error_msg = frame.get("message", "unknown error")
                 break
-            if topic != "data":
+            if topic == "done" and frame.get("cmd") in (None, "monitor_spectrum"):
                 break
+            if topic != "data":
+                continue
             if frame.get("type") != "spectrum":
                 continue
 
@@ -806,10 +808,10 @@ def cmd_generate_sine(cmd, cfg, client):
                 topic, frame = client.recv_data(timeout_ms=500)
             except TimeoutError:
                 continue   # still playing
-            if topic == "error":
+            if topic == "error" and frame.get("cmd") in (None, "generate"):
                 print(f"\n  error: {frame.get('message')}")
                 return
-            if topic == "done":
+            if topic == "done" and frame.get("cmd") in (None, "generate"):
                 return
     except KeyboardInterrupt:
         client.send_cmd({"cmd": "stop", "name": "generate"})
@@ -868,10 +870,10 @@ def cmd_generate_pink(cmd, cfg, client):
                 topic, frame = client.recv_data(timeout_ms=500)
             except TimeoutError:
                 continue
-            if topic == "error":
+            if topic == "error" and frame.get("cmd") in (None, "generate_pink"):
                 print(f"\n  error: {frame.get('message')}")
                 return
-            if topic == "done":
+            if topic == "done" and frame.get("cmd") in (None, "generate_pink"):
                 return
     except KeyboardInterrupt:
         client.send_cmd({"cmd": "stop", "name": "generate_pink"})
