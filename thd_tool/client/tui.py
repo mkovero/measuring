@@ -93,15 +93,30 @@ class SpectrumRenderer:
     # ------------------------------------------------------------------
 
     def _log_bin(self, freqs, spectrum_linear, n_bars, f_lo=20.0, f_hi=24000.0):
-        """Max linear amplitude per log-spaced bar column."""
+        """Max linear amplitude per log-spaced bar column.
+
+        When FFT resolution is coarse (low frequencies, short captures), many
+        columns contain no bins and would render as silent gaps.  Fill those
+        columns with the nearest populated column's value so the display looks
+        continuous rather than spikey.
+        """
         if len(freqs) == 0:
             return np.full(n_bars, 1e-12)
-        edges  = f_lo * (f_hi / f_lo) ** (np.arange(n_bars + 1) / n_bars)
-        result = np.full(n_bars, 1e-12)
+        edges    = f_lo * (f_hi / f_lo) ** (np.arange(n_bars + 1) / n_bars)
+        result   = np.full(n_bars, 1e-12)
+        has_data = np.zeros(n_bars, dtype=bool)
         for c in range(n_bars):
             mask = (freqs >= edges[c]) & (freqs < edges[c + 1])
             if mask.any():
-                result[c] = spectrum_linear[mask].max()
+                result[c]   = spectrum_linear[mask].max()
+                has_data[c] = True
+        # Fill empty columns via nearest-neighbour from populated columns
+        if has_data.any() and not has_data.all():
+            idxs    = np.arange(n_bars)
+            filled  = idxs[has_data]
+            # For each empty column, index of closest populated column
+            nearest = filled[np.argmin(np.abs(filled[:, None] - idxs[~has_data]), axis=0)]
+            result[~has_data] = result[nearest]
         return result
 
     def _harmonic_columns(self, harmonic_freqs, n_bars, f_lo=20.0, f_hi=24000.0):

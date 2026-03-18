@@ -236,16 +236,24 @@ def _worker_monitor_spectrum(pub_q, stop_ev, cfg, cmd):
         while not stop_ev.is_set():
             data = engine.capture_block(duration)
             rec  = data.reshape(-1, 1)
-            r    = analyze(rec, sr=engine.samplerate, fundamental=freq)
+            # Auto-detect dominant frequency: find the highest spectral peak
+            # above 20 Hz so THD is correct regardless of the hint in cmd.
+            mono_d    = data.astype(np.float64)
+            spec_d    = np.abs(np.fft.rfft(mono_d))
+            freqs_d   = np.fft.rfftfreq(len(mono_d), 1.0 / engine.samplerate)
+            min_bin   = max(1, int(20.0 * len(mono_d) / engine.samplerate))
+            peak_bin  = int(np.argmax(spec_d[min_bin:])) + min_bin
+            detected  = float(freqs_d[peak_bin]) if spec_d[peak_bin] > 1e-6 else freq
+            r    = analyze(rec, sr=engine.samplerate, fundamental=detected)
             if "error" in r:
                 continue
             spec_ds, freqs_ds = _downsample_spectrum(r["spectrum"][1:], r["freqs"][1:])
-            in_vrms = cal.in_vrms(r["linear_rms"], freq) if (cal and cal.input_ok) else None
+            in_vrms = cal.in_vrms(r["linear_rms"], detected) if (cal and cal.input_ok) else None
             in_dbu  = vrms_to_dbu(in_vrms)         if in_vrms is not None    else None
             _pub(pub_q, "data", {
                 "type":     "spectrum",
                 "cmd":      "monitor_spectrum",
-                "freq_hz":  freq,
+                "freq_hz":  detected,
                 "sr":       engine.samplerate,
                 "freqs":    freqs_ds.tolist(),
                 "spectrum": spec_ds.tolist(),

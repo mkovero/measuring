@@ -743,16 +743,17 @@ def cmd_monitor_spectrum(cmd, cfg, client):
             if frame.get("type") != "spectrum":
                 continue
 
-            sr = frame.get("sr", 48000)
-            harmonic_freqs = [freq * (i + 1) for i in range(10)
-                              if freq * (i + 1) < sr / 2]
+            sr           = frame.get("sr", 48000)
+            detected_hz  = frame.get("freq_hz", freq)
+            harmonic_freqs = [detected_hz * (i + 1) for i in range(10)
+                              if detected_hz * (i + 1) < sr / 2]
             out = renderer.render(
                 np.array(frame["freqs"]),
                 np.array(frame["spectrum"]),
                 frame.get("thd_pct"),
                 frame.get("thdn_pct"),
                 frame.get("in_dbu"),
-                freq,
+                detected_hz,
                 harmonic_freqs,
                 sr=sr,
             )
