@@ -114,6 +114,20 @@ class GpioHandler:
             "serial_dead":  self._serial_dead,
         }
 
+    def _resolve_level_dbfs(self):
+        """Fetch current calibration and return 0 dBu in dBFS, or -20 dBFS if uncalibrated."""
+        cal = self._send_zmq({"cmd": "get_calibration"})
+        if cal and cal.get("vrms_at_0dbfs_out"):
+            vrms_ref = 0.7745966692  # 0 dBu
+            dbfs = 20.0 * math.log10(vrms_ref / cal["vrms_at_0dbfs_out"])
+            level = max(-60.0, min(-0.5, dbfs))
+            self._log(f"calibration: vrms_at_0dbfs_out={cal['vrms_at_0dbfs_out']:.4f}  ->  {level:.2f} dBFS")
+        else:
+            level = -20.0
+            self._log("calibration unavailable, using fallback -20.00 dBFS")
+        self._level_dbfs = level
+        return level
+
     def start(self):
         """Configure pins, fetch calibration, start threads. Returns immediately."""
         for pin in INPUT_PINS:
@@ -125,16 +139,8 @@ class GpioHandler:
 
         self._log(f"serial port opened: {self._serial_port}")
 
-        # Resolve 0 dBu level in dBFS using server calibration
-        cal = self._send_zmq({"cmd": "get_calibration"})
-        if cal and cal.get("vrms_at_0dbfs_out"):
-            vrms_ref = 0.7745966692  # 0 dBu
-            dbfs = 20.0 * math.log10(vrms_ref / cal["vrms_at_0dbfs_out"])
-            self._level_dbfs = max(-60.0, min(-0.5, dbfs))
-            self._log(f"calibration: vrms_at_0dbfs_out={cal['vrms_at_0dbfs_out']:.4f}  ->  {self._level_dbfs:.2f} dBFS")
-        else:
-            self._level_dbfs = -20.0
-            self._log("calibration unavailable, using fallback -20.00 dBFS")
+        # Initial level resolution (cached in _level_dbfs for status display)
+        self._resolve_level_dbfs()
 
         # Read output channel from server config
         ack = self._send_zmq({"cmd": "setup", "update": {}})
@@ -225,13 +231,14 @@ class GpioHandler:
                         self._log("stopping pink before starting sine")
                         self._send_zmq({"cmd": "stop", "name": "generate_pink"})
                         self._pink_active = False
-                    self._log(f"button: SINE -> generate 1 kHz @ {self._level_dbfs:.2f} dBFS ch {self._out_channel}")
+                    level = self._resolve_level_dbfs()
+                    self._log(f"button: SINE -> generate 1 kHz @ {level:.2f} dBFS ch {self._out_channel}")
                     self._sine_active = True
                     self._update_leds()   # optimistic
                     ack = self._send_zmq({
                         "cmd":        "generate",
                         "freq_hz":    1000.0,
-                        "level_dbfs": self._level_dbfs,
+                        "level_dbfs": level,
                         "channels":   [self._out_channel],
                     })
                     if ack and ack.get("ok"):
@@ -247,12 +254,13 @@ class GpioHandler:
                         self._log("stopping sine before starting pink")
                         self._send_zmq({"cmd": "stop", "name": "generate"})
                         self._sine_active = False
-                    self._log(f"button: PINK -> generate_pink @ {self._level_dbfs:.2f} dBFS ch {self._out_channel}")
+                    level = self._resolve_level_dbfs()
+                    self._log(f"button: PINK -> generate_pink @ {level:.2f} dBFS ch {self._out_channel}")
                     self._pink_active = True
                     self._update_leds()   # optimistic
                     ack = self._send_zmq({
                         "cmd":        "generate_pink",
-                        "level_dbfs": self._level_dbfs,
+                        "level_dbfs": level,
                         "channels":   [self._out_channel],
                     })
                     if ack and ack.get("ok"):
