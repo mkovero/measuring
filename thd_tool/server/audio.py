@@ -114,6 +114,7 @@ class JackEngine:
         freqs = np.fft.rfftfreq(n, 1.0 / self._sr)
         freqs[0] = 1.0   # avoid division by zero at DC
         fft  /= np.sqrt(freqs)
+        fft[freqs < 20.0] = 0.0   # band-limit to >=20 Hz; sub-20 Hz bins in a 1s loop create a beating periodic component that destabilises RMS measurements
         pink  = np.fft.irfft(fft, n=n).astype(np.float32)
         rms = float(np.sqrt(np.mean(pink ** 2)))
         if rms > 0:
