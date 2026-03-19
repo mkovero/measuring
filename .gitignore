@@ -1,5 +1,7 @@
 thd_tool/old
 thd_tool/old2
-thd_tool/__pycache__
+**/__pycache__/
+*.pyc
+*.egg-info/
 *.png
 *.csv

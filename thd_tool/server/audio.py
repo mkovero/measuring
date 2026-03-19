@@ -115,9 +115,9 @@ class JackEngine:
         freqs[0] = 1.0   # avoid division by zero at DC
         fft  /= np.sqrt(freqs)
         pink  = np.fft.irfft(fft, n=n).astype(np.float32)
-        peak  = np.max(np.abs(pink))
-        if peak > 0:
-            pink *= amplitude / peak
+        rms = float(np.sqrt(np.mean(pink ** 2)))
+        if rms > 0:
+            pink *= amplitude / rms
         with self._tone_lock:
             self._tone     = pink
             self._tone_pos = 0

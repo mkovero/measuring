@@ -1,3 +1,0 @@
-[console_scripts]
-ac = thd_tool.ac:main
-thd = thd_tool.cli:main
