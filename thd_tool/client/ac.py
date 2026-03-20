@@ -763,9 +763,11 @@ def cmd_monitor(cmd, cfg, client):
     db_min = min_y[1] if (min_y and isinstance(min_y, tuple)) else -100
     db_max = max_y[1] if (max_y and isinstance(max_y, tuple)) else 0
 
+    host = cfg.get("server_host", "localhost")
+    data_port = cfg.get("zmq_data_port", DATA_PORT)
+
     if cmd.get("show_plot"):
-        host = cfg.get("server_host", "localhost")
-        _launch_ui("spectrum", host=host, data_port=cfg.get("zmq_data_port", DATA_PORT))
+        _launch_ui("spectrum", host=host, data_port=data_port)
 
     ack = _check_ack(client.send_cmd({
         "cmd":      "monitor_spectrum",
@@ -774,6 +776,31 @@ def cmd_monitor(cmd, cfg, client):
     }))
     print(f"  Input: {ack['in_port']}")
     print(f"  {start_freq:.0f}–{end_freq:.0f} Hz  |  Ctrl+C or q to stop")
+
+    if cmd.get("graph"):
+        # Graph mode: pyqtgraph UI is the display; terminal just waits quietly.
+        print("  Graph window open — press q/ESC in the window or Ctrl+C here to stop.")
+        q_stop, q_restore = _make_q_listener()
+        try:
+            while True:
+                if q_stop.is_set():
+                    break
+                try:
+                    topic, frame = client.recv_data(timeout_ms=2000)
+                except TimeoutError:
+                    continue
+                if topic == "error" and frame.get("cmd") in (None, "monitor_spectrum"):
+                    print(f"  Error: {frame.get('message', 'unknown error')}")
+                    break
+                if topic == "done" and frame.get("cmd") in (None, "monitor_spectrum"):
+                    break
+        except KeyboardInterrupt:
+            pass
+        finally:
+            client.send_cmd({"cmd": "stop", "name": "monitor_spectrum"})
+            print("  Stopped.")
+            q_restore()
+        return
 
     renderer = SpectrumRenderer(db_min=db_min, db_max=db_max,
                                 start_freq=start_freq, end_freq=end_freq)

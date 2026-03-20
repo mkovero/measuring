@@ -17,7 +17,6 @@ class SpectrumView(QtWidgets.QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Spectrum Monitor")
-        self.resize(1100, 650)
 
         # Smoothing state
         self._smooth_db  = None
@@ -30,6 +29,7 @@ class SpectrumView(QtWidgets.QMainWindow):
         self._harmonic_lines = []   # InfiniteLine items
 
         self._build_ui()
+        self.showFullScreen()
 
     # ------------------------------------------------------------------
     # UI construction
@@ -219,6 +219,22 @@ class SpectrumView(QtWidgets.QMainWindow):
 
         hz = 10 ** lf
         self._readout_label.setText(f"  ► {hz:,.1f} Hz   {db:.1f} dBFS")
+
+    # ------------------------------------------------------------------
+    # Keyboard shortcuts
+    # ------------------------------------------------------------------
+
+    def keyPressEvent(self, event):
+        key = event.key()
+        if key in (QtCore.Qt.Key.Key_Q, QtCore.Qt.Key.Key_Escape):
+            self.close()
+        elif key == QtCore.Qt.Key.Key_F11:
+            if self.isFullScreen():
+                self.showNormal()
+            else:
+                self.showFullScreen()
+        else:
+            super().keyPressEvent(event)
 
 
 # ---------------------------------------------------------------------------

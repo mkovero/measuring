@@ -18,9 +18,8 @@ class SweepView(QtWidgets.QMainWindow):
 
         title = "Frequency Sweep" if self._is_freq else "Level Sweep"
         self.setWindowTitle(title)
-        self.resize(1200, 800)
-
         self._build_ui()
+        self.showFullScreen()
 
     # ------------------------------------------------------------------
     # UI construction
@@ -139,8 +138,9 @@ class SweepView(QtWidgets.QMainWindow):
             xr_s = f"  !! {xr} xrun(s)" if xr else ""
             self._status_label.setText(
                 f"  Sweep complete — {n} points.{xr_s}  Click a point to inspect spectrum.")
-            # Unlock interactive zoom/pan
-            for p in [self._p_thd, self._p_thdn, self._p_gain, self._p_spec]:
+            # Unlock interactive zoom/pan on gain and spectrum only;
+            # _p_thd/_p_thdn stay click-only so sigMouseClicked keeps firing
+            for p in [self._p_gain, self._p_spec]:
                 p.setMouseEnabled(x=True, y=True)
 
     # ------------------------------------------------------------------
@@ -168,20 +168,21 @@ class SweepView(QtWidgets.QMainWindow):
         gain = np.array([p.get("gain_db", np.nan) for p in pts])
         clip = np.array([bool(p.get("clipping")) for p in pts])
 
-        if self._is_freq:
-            log_xs = np.log10(np.maximum(xs, 1.0))
-        else:
-            log_xs = xs   # linear level axis
+        # Filter clipped/ac_coupled points from main lines (match matplotlib behaviour)
+        valid = np.array([not p.get("clipping") and not p.get("ac_coupled")
+                          for p in pts])
+        if not valid.any():
+            valid = np.ones(len(pts), dtype=bool)
 
-        self._thd_line.setData(log_xs, thd)
-        self._thdn_line.setData(log_xs, thdn)
-        self._gain_line.setData(log_xs, gain)
+        # Pass raw xs — plots with setLogMode(x=True) apply log10 internally
+        self._thd_line.setData(xs[valid], thd[valid])
+        self._thdn_line.setData(xs[valid], thdn[valid])
+        self._gain_line.setData(xs[valid], gain[valid])
 
-        # Clipped scatter
+        # Clipped scatter: show all clipped points regardless of valid mask
         if clip.any():
-            cx = log_xs[clip]
-            self._clip_thd.setData(cx, thd[clip])
-            self._clip_thdn.setData(cx, thdn[clip])
+            self._clip_thd.setData(xs[clip], thd[clip])
+            self._clip_thdn.setData(xs[clip], thdn[clip])
         else:
             self._clip_thd.setData([], [])
             self._clip_thdn.setData([], [])
@@ -231,8 +232,8 @@ class SweepView(QtWidgets.QMainWindow):
         spec  = np.array(spec,  dtype=float)
         spec_db = 20.0 * np.log10(np.maximum(spec, 1e-12))
 
-        log_f = np.log10(np.maximum(freqs, 1.0))
-        self._spec_curve.setData(log_f, spec_db)
+        # Pass raw freqs — _p_spec has setLogMode(x=True)
+        self._spec_curve.setData(freqs, spec_db)
 
         # Update harmonic markers
         for ln in self._spec_harmonic_lines:
@@ -270,6 +271,22 @@ class SweepView(QtWidgets.QMainWindow):
         self._readout_label.setText(
             f"  Selected: {x_label}   THD: {thd:.4f}%   THD+N: {thdn:.4f}%"
         )
+
+    # ------------------------------------------------------------------
+    # Keyboard shortcuts
+    # ------------------------------------------------------------------
+
+    def keyPressEvent(self, event):
+        key = event.key()
+        if key in (QtCore.Qt.Key.Key_Q, QtCore.Qt.Key.Key_Escape):
+            self.close()
+        elif key == QtCore.Qt.Key.Key_F11:
+            if self.isFullScreen():
+                self.showNormal()
+            else:
+                self.showFullScreen()
+        else:
+            super().keyPressEvent(event)
 
 
 # ---------------------------------------------------------------------------

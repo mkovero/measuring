@@ -108,17 +108,17 @@ class JackEngine:
             self._tone_pos = 0
 
     def set_pink_noise(self, amplitude):
-        n     = 4 * self._sr   # 4-second buffer: lowest bin at 0.25 Hz, below DMM AC-coupling cutoff (~3 Hz), so the looping period doesn't beat against the integration window
+        n     = 4 * self._sr   # 4-second buffer for stability; sub-20 Hz bins are zeroed below
         white = np.random.randn(n).astype(np.float32)
         fft   = np.fft.rfft(white)
         freqs = np.fft.rfftfreq(n, 1.0 / self._sr)
         freqs[0] = 1.0   # avoid division by zero at DC
         fft  /= np.sqrt(freqs)
-        fft[0] = 0.0     # zero DC bin
+        fft[freqs < 20.0] = 0.0  # band-limit to ≥20 Hz; matches DMM >20 Hz mode, RMS norm consistent with what DMM measures
         pink  = np.fft.irfft(fft, n=n).astype(np.float32)
         rms = float(np.sqrt(np.mean(pink ** 2)))
         if rms > 0:
-            pink *= amplitude / rms
+            pink *= amplitude / (rms * np.sqrt(2))  # amplitude is peak-referenced (sine peak = amplitude); pink RMS = amplitude/√2
         with self._tone_lock:
             self._tone     = pink
             self._tone_pos = 0
