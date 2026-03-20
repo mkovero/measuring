@@ -68,9 +68,9 @@ esac
 echo "=== Fireface 400 init  (card $CARD, level mode: $LEVEL_NAME) ==="
 
 # ── Ensure snd-fireface-ctl service is running (bridges ALSA → FireWire hw) ──
-systemctl --user restart snd-fireface-ctl.service
-sleep 1
-echo "  snd-fireface-ctl:   restarted"
+#systemctl --user restart snd-fireface-ctl.service
+#sleep 1
+#echo "  snd-fireface-ctl:   restarted"
 
 # ── Output / input reference levels ──────────────────────────────────────────
 amixer -c $CARD cset numid=93 $LEVEL_IDX >/dev/null  # line-output-level
