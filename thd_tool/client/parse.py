@@ -16,7 +16,7 @@
 #   ac monitor spectrum <freq:freq> [<interval:time>]  (input-only)
 #   ac generate sine <level:level> [<freq:freq>]
 #   ac generate pink <level:level>
-#   ac calibrate     [<freq:freq>] [<level:level>]
+#   ac calibrate     [<level:level>]
 
 import re
 import sys
@@ -338,7 +338,7 @@ def parse(argv):
             raise ParseError(f"unknown generate noun: {noun!r}  (sine | pink)")
 
     elif verb == "calibrate":
-        # Optional channel overrides: ac calibrate [output N] [input N] [freq] [level]
+        # Optional channel overrides: ac calibrate [output N] [input N] [level]
         result    = {"cmd": "calibrate", "show_plot": show_plot}
         remaining = list(args)
         clean     = []
@@ -354,11 +354,9 @@ def parse(argv):
             else:
                 clean.append(remaining.pop(0))
         tokens = _classify_all(clean)
-        freq  = _pull(tokens, "freq",  optional=True)
         level = _pull(tokens, "level", optional=True)
         if tokens:
             raise ParseError(f"unexpected token(s): {tokens}")
-        result["freq"]  = freq  or 1000.0
         result["level"] = level or ("dbfs", -10.0)
         return result
 
@@ -496,7 +494,7 @@ USAGE = """\
 ac — audio measurement CLI
 
 Commands:
-  devices                              list JACK ports
+  devices                              list audio ports
   setup <key> <val> ...                configure (output, input, range, dmm, gpio)
   calibrate [output N] [input N]       interactive level calibration
   calibrate show                       show stored calibration
@@ -521,7 +519,7 @@ Server:    server enable|disable|connections|<host>
 
 Examples:
   ac setup output 11 input 0
-  ac calibrate 1khz
+  ac calibrate
   ac g si 0dbu 1khz
   ac plot 20hz 20khz 0dbu 20ppd show
   ac m sh

@@ -183,11 +183,10 @@ def test_generate_sine_with_channels():
 # ---------------------------------------------------------------------------
 
 def test_calibrate():
-    r = parse(["calibrate", "output", "1", "input", "2", "1khz", "-10dbfs"])
+    r = parse(["calibrate", "output", "1", "input", "2", "-10dbfs"])
     assert r["cmd"]            == "calibrate"
     assert r["output_channel"] == 1
     assert r["input_channel"]  == 2
-    assert r["freq"]           == 1000.0
     assert r["level"]          == ("dbfs", -10.0)
 
 

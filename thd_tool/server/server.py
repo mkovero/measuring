@@ -343,7 +343,6 @@ def _worker_generate_pink(pub_q, stop_ev, cfg, cmd):
 
 def _worker_calibrate(pub_q, stop_ev, cal_q, cfg, cmd):
     from .jack_calibration import run_calibration_jack_zmq
-    freq           = cmd.get("freq_hz", 1000.0)
     ref_dbfs       = cmd.get("ref_dbfs", -10.0)
     output_channel = cmd.get("output_channel", cfg["output_channel"])
     input_channel  = cmd.get("input_channel",  cfg["input_channel"])
@@ -353,7 +352,6 @@ def _worker_calibrate(pub_q, stop_ev, cal_q, cfg, cmd):
         output_channel=output_channel,
         input_channel=input_channel,
         ref_dbfs=ref_dbfs,
-        freq=freq,
         dmm_host=cfg.get("dmm_host"),
         range_start_hz=cfg.get("range_start_hz", 20.0),
         range_stop_hz=cfg.get("range_stop_hz", 20000.0),

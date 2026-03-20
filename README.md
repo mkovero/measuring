@@ -40,7 +40,7 @@ jackd -d alsa -d hw:0 -r 48000 -p 1024 -n 2
 ```bash
 ac devices                          # list available audio ports
 ac setup output 11 input 0          # tell ac which channels to use
-ac calibrate 1khz                   # interactive level cal (enables dBu)
+ac calibrate                        # interactive level cal (enables dBu)
 ac plot 20hz 20khz 0dbu 20ppd show  # measure THD vs frequency, open plot
 ac s f 20hz 20khz 0dbu              # fast output-only chirp
 ac m sh                             # live spectrum, pyqtgraph window

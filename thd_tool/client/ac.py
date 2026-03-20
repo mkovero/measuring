@@ -491,7 +491,6 @@ def cmd_calibrate_show(_cmd, cfg, client):
 
 
 def cmd_calibrate(cmd, cfg, client):
-    freq    = cmd["freq"]
     level   = cmd["level"]
     out_ch  = cmd.get("output_channel")
     in_ch   = cmd.get("input_channel")
@@ -504,14 +503,14 @@ def cmd_calibrate(cmd, cfg, client):
     else:
         ref_dbfs = -10.0
 
-    c = {"cmd": "calibrate", "freq_hz": freq, "ref_dbfs": ref_dbfs}
+    c = {"cmd": "calibrate", "ref_dbfs": ref_dbfs}
     if out_ch is not None:
         c["output_channel"] = out_ch
     if in_ch is not None:
         c["input_channel"] = in_ch
 
     ack = _check_ack(client.send_cmd(c, timeout_ms=5000))
-    print(f"  Calibration started: {freq:.0f} Hz  |  {ref_dbfs:.1f} dBFS")
+    print(f"  Calibration started: 1 kHz  |  {ref_dbfs:.1f} dBFS")
 
     try:
         while True:

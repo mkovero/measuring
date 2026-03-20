@@ -250,12 +250,13 @@ def _parse_dmm(prompt, dmm_host=None):
 # ---------------------------------------------------------------------------
 
 def run_calibration_jack(output_channel=0, input_channel=0,
-                         ref_dbfs=-10.0, freq=1000, dmm_host=None,
+                         ref_dbfs=-10.0, dmm_host=None,
                          range_start_hz=20.0, range_stop_hz=20000.0,
                          output_port=None, input_port=None):
     from .signal import make_sine
     from ..constants import SAMPLERATE
 
+    freq         = 1000.0
     cal          = Calibration(output_channel=output_channel,
                                input_channel=input_channel)
     cal.ref_freq = freq
@@ -381,7 +382,7 @@ def run_calibration_jack(output_channel=0, input_channel=0,
 
 def run_calibration_jack_zmq(pub_q, cal_q,
                               output_channel=0, input_channel=0,
-                              ref_dbfs=-10.0, freq=1000, dmm_host=None,
+                              ref_dbfs=-10.0, dmm_host=None,
                               range_start_hz=20.0, range_stop_hz=20000.0,
                               output_port=None, input_port=None):
     """Calibration for the ZMQ server: publishes cal_prompt/cal_done instead of
@@ -392,9 +393,10 @@ def run_calibration_jack_zmq(pub_q, cal_q,
     def _pub(topic, frame):
         pub_q.put(topic.encode() + b" " + json.dumps(frame).encode())
 
+    freq         = 1000.0
     cal          = Calibration(output_channel=output_channel,
                                input_channel=input_channel)
-    cal.ref_freq = float(freq)
+    cal.ref_freq = freq
     cal.ref_dbfs = ref_dbfs
     amplitude    = 10.0 ** (ref_dbfs / 20.0)
 

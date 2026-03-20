@@ -28,7 +28,7 @@ jackd -d alsa -d hw:0 -r 48000 -p 1024 -n 2
 ```bash
 ac devices                              # list audio ports
 ac setup output 11 input 0             # save port config
-ac calibrate 1khz                      # interactive calibration
+ac calibrate                           # interactive calibration
 ac sweep level -20dbu 6dbu 1khz       # level sweep
 ac sweep frequency 20hz 20khz 0dbu    # freq sweep
 ac monitor thd 0dbu 1khz              # live THD monitor
@@ -63,20 +63,20 @@ See `server/CLAUDE.md`, `client/CLAUDE.md`, `ui/CLAUDE.md` for subpackage docs.
 
 ## Room measurement scripts (OSM + Babyface)
 
-These shell scripts live at the repo root and are independent of `thd_tool`. They wire up a RME Babyface (ALSA card 1) with OpenSoundMeter (OSM) over JACK for room/speaker measurements.
+These shell scripts live in `scripts/` and are independent of `thd_tool`. They wire up a RME Babyface (ALSA card 1) with OpenSoundMeter (OSM) over JACK for room/speaker measurements.
 
 ### Scripts
 
-- **`osm-start.sh`** — sets CPU governor to `performance`, pins IRQs, forces PipeWire quantum/rate (48 kHz / 128 frames), launches OSM with real-time priority (`chrt -f 70`) pinned to cores 6–7, then restores `powersave` on exit.
-- **`babyface.sh`** — main controller. Sources `functions.sh`, discovers JACK ports by name pattern, then dispatches:
+- **`scripts/osm-start.sh`** — sets CPU governor to `performance`, pins IRQs, forces PipeWire quantum/rate (48 kHz / 128 frames), launches OSM with real-time priority (`chrt -f 70`) pinned to cores 6–7, then restores `powersave` on exit.
+- **`scripts/babyface.sh`** — main controller. Sources `functions.sh`, discovers JACK ports by name pattern, then dispatches:
   - `-c` / `-d` — connect / disconnect all (generator + reference + measurement)
   - `-g/-G` `-r/-R` `-m/-M` — connect/disconnect generator, reference, or measurement individually
   - `-x` — use XLR IN (INR / capture_AUX3) as reference instead of the default (REFL / capture_AUX2)
   - `-P` / `-p` — enable/disable 48 V phantom on AN1 mic input (with a confirmation prompt for `-P`)
   - `-i` — reset Babyface input gains and output mixer to known defaults (see below)
-- **`functions.sh`** — sourced by `babyface.sh`; defines all the `Connect*`, `Disconnect*`, phantom, and gain functions. Sources `config.sh` for port variable definitions.
-- **`config.sh`** — defines port name variables by grepping `jack_lsp` output (AUX0–AUX3 for inputs, AUX0–AUX3 for playback, plus OSM generator/reference/measurement ports).
-- **`vol.sh`** — one-liner: sets Main-Out AN1, AN2, PH3, PH4 to the value passed as `$@` via `amixer`.
+- **`scripts/functions.sh`** — sourced by `babyface.sh`; defines all the `Connect*`, `Disconnect*`, phantom, and gain functions. Sources `config.sh` for port variable definitions.
+- **`scripts/config.sh`** — defines port name variables by grepping `jack_lsp` output (AUX0–AUX3 for inputs, AUX0–AUX3 for playback, plus OSM generator/reference/measurement ports).
+- **`scripts/babyface-reset-vol.sh`** — one-liner: sets Main-Out AN1, AN2, PH3, PH4 to the value passed as `$@` via `amixer`.
 
 ### Port / signal routing
 
