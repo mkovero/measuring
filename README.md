@@ -1,7 +1,9 @@
 # ac — audio measurement CLI
 
 Command-line toolkit for audio bench measurements over JACK.
-THD, THD+N, level sweeps, frequency sweeps, live spectrum.
+
+THD, THD+N, level 'n frequency sweeps, live spectrum.
+
 The `ip` of audio — terse, positional, unit-tagged arguments.
 
 ## Install
@@ -32,13 +34,13 @@ ac m sh                             # live spectrum, pyqtgraph window
 | Command | What it does |
 |---------|-------------|
 | `devices` | List JACK ports |
-| `setup` | Configure hardware — output, input, range, dmm, gpio |
-| `calibrate` | Interactive level calibration (needed for dBu) |
+| `setup` | Configure hardware — output, input, range, dmm (SCPI), gpio |
+| `calibrate` | Interface calibration |
 | `generate` | Play a sine or pink noise tone |
-| `sweep` | Output-only level ramp or frequency chirp |
-| `plot` | Blocking point-by-point THD measurement |
-| `monitor` | Live spectrum — TUI or pyqtgraph window |
-| `stop` | Stop active generator or measurement |
+| `sweep` | Ramp or frequency chirp |
+| `plot` | Point-by-point THD measurement |
+| `monitor` | Live spectrum |
+| `stop` | Stop activities |
 
 ## Units
 
@@ -80,8 +82,8 @@ ac diff amp1 amp2   # compare
 It auto-spawns locally. For remote use:
 
 ```bash
-ac server enable          # bind to all interfaces
-ac server 192.168.1.5     # point client at remote host
+ac server enable          # bind to all interfaces on a server
+ac server 192.168.1.5     # connect to remote server
 ```
 
 ## Dependencies
