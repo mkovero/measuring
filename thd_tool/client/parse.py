@@ -493,89 +493,39 @@ def parse(argv):
 # ---------------------------------------------------------------------------
 
 USAGE = """\
-ac -- audio bench tool
+ac — audio measurement CLI
 
-  ac sweep level   <start> <stop> <freq> [<duration>]   (output-only ramp)
-  ac sweep frequency <start> <stop> <level> [<duration>] (output-only chirp)
-  ac plot  [<start> <stop>] [<level>] [<ppd>]           (blocking measurement)
-  ac monitor [<startFreq> [<endFreq>]] [<interval>] [<minY> [<maxY>]]  [show]
-  ac generate sine [<channels>] [<level>] [<freq>]
-  ac generate pink [<channels>] [<level>]
-  ac calibrate     [output N] [input N] [<freq>] [<level>]
-  ac calibrate show
-  ac server enable          (bind server to all interfaces, save config)
-  ac server disable         (bind server to localhost only, save config)
-  ac server connections     (show listen mode, connected clients, active workers)
-  ac server [<host>]        (connect to server at host, default: localhost)
+Commands:
+  devices                              list JACK ports
+  setup <key> <val> ...                configure (output, input, range, dmm, gpio)
+  calibrate [output N] [input N]       interactive level calibration
+  calibrate show                       show stored calibration
+  generate sine [ch] [level] [freq]    play sine tone
+  generate pink [ch] [level]           play pink noise
+  sweep level <start> <stop> [freq]    output-only level ramp
+  sweep frequency <start> <stop> [level]  output-only chirp
+  plot [<start> <stop>] [level] [ppd]  blocking THD measurement
+  monitor [<start> <stop>] [interval]  live spectrum (TUI or show)
+  stop                                 stop active generator/measurement
+  dmm                                  read AC Vrms from configured DMM
 
-Sessions (group measurement files together):
-  ac new <name>             create a new session and make it active
-  ac sessions               list all sessions with file counts
-  ac use <name>             switch active session
-  ac rm  <name>             delete session and all its files (with confirmation)
-  ac diff <nameA> <nameB>   compare most recent CSVs from two sessions
+Units:  20hz 1khz  |  0dbu -12dbfs 775mvrms 1vrms  |  1s  |  10ppd
+        append "show" to open pyqtgraph window
 
-Units:
-  frequency : 20hz  1khz  20000hz
-  level     : 0dbu  -12dbfs  775mvrms  1vrms  2vpp
-  duration  : 1s  0.5s
-  ppd       : 10ppd  (points per decade, for ac plot)
-  interval  : 0.2s  (update interval for ac monitor)
+Short forms:  s(weep) m(onitor) g(enerate) c(alibrate) p(lot)
+              l(evel) f(requency) si(ne) pk(ink) sh(ow)
+              se(tup) d(evices) st(op)
 
-Abbreviations:
-  sweep->s  monitor->m  generate->g  calibrate->c  plot->p
-  level->l  frequency->f  sine->si  pink->pk
-  new->n  sessions->ses/sess  use->u  diff->df
-
-Notes:
-  ac sweep is non-blocking (output only). Use ac plot for blocking measurements.
-  ac monitor auto-detects fundamental.
-  ac monitor show opens a fullscreen pyqtgraph spectrum window instead of TUI.
-  dBu and Vrms levels require prior calibration (ac calibrate).
-  dBFS levels work without calibration.
-  generate level defaults to 0dBu if calibrated, -20dBFS otherwise.
+Sessions:  new <name>  sessions  use <name>  rm <name>  diff <a> <b>
+Server:    server enable|disable|connections|<host>
 
 Examples:
-  ac devices
-  ac setup output 11 input 0 device 0
-  ac sweep level -20dbu 6dbu 1khz
-  ac sweep level -40dbfs 0dbfs 1khz 2s
-  ac sweep frequency 20hz 20khz 0dbu
-  ac sweep frequency 20hz 20khz 0dbu 5s
-  ac s f 20hz 20khz 0dbu
-  ac plot 20hz 20khz 0dbu 20ppd
-  ac plot 20hz 20khz 0dbu
-  ac p 20hz 20khz
-  ac generate sine 0dbu 1khz
-  ac g si 0dbu
-  ac generate pink 0dbu
-  ac g pk -12dbfs
-  ac monitor
-  ac monitor 1khz
-  ac monitor 20hz 20khz 0.2s
-  ac m 1khz
-  ac calibrate show
+  ac setup output 11 input 0
   ac calibrate 1khz
-  ac cal out 1 in 2
-  ac dmm
-
-  ac setup output 11 input 0 device 0
-  ac setup output 1   # change just one value
-  ac setup dmm 172.19.92.100
-  ac setup range 20hz 20khz
-  ac server enable           # bind to all interfaces (saves config)
-  ac server disable          # bind to localhost only (saves config)
-  ac server connections      # show listen mode, clients, workers
-  ac ser c                   # same, abbreviated
-  ac server 192.168.1.5      # point future ac commands at that host
-  ac server                  # point at localhost (default)
-
-  ac new myamp               # create session + make active
-  ac sessions                # list sessions
-  ac use myamp               # switch active session
-  ac rm  myamp_old           # delete session (with prompt)
-  ac diff myamp myamp2       # compare sessions side-by-side
-"""
+  ac g si 0dbu 1khz
+  ac plot 20hz 20khz 0dbu 20ppd show
+  ac m sh
+  ac s f 20hz 20khz 0dbu"""
 
 
 if __name__ == "__main__":
