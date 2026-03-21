@@ -93,6 +93,34 @@ ac use myamp        # switch
 ac diff amp1 amp2   # compare
 ```
 
+## GPIO — physical button control
+
+Optional hardware interface for hands-free operation. A [usb2gpio](https://github.com/mkovero/usb2gpio) board (Arduino Mega2560) connects via USB serial and provides physical buttons for starting/stopping tone generation, with LED feedback for active state.
+
+Buttons trigger ZMQ commands to the server — press SINE to generate a 1 kHz tone at the calibrated level, press STOP to silence it. LEDs reflect what's playing.
+
+```bash
+ac setup gpio /dev/ttyUSB0   # enable
+ac setup gpio none           # disable
+ac gpio                      # show status
+ac gpio log                  # stream button events
+```
+
+The server auto-starts the GPIO handler on launch if `gpio_port` is configured.
+
+## DMM — automated meter readings
+
+Optional SCPI integration for reading a bench multimeter (e.g. Keysight 34461A) over TCP. During calibration, `ac` queries the DMM for AC Vrms readings instead of requiring manual entry — it connects to port 5025, sends `MEAS:VOLT:AC?`, and averages three readings.
+
+The DMM value is presented as a suggestion; you can accept it or type an override.
+
+```bash
+ac setup dmm 192.168.1.100   # enable (IP or hostname of meter)
+ac setup dmm disable          # disable
+ac dmm                        # take a one-off reading
+ac calibrate                  # uses DMM automatically if configured
+```
+
 ## Server
 
 `ac` is client/server — the server manages audio I/O and runs analysis.
