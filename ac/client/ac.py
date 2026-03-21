@@ -36,6 +36,7 @@ class AcClient:
             sys.exit(1)
         self._host      = host
         self._ctrl_port = ctrl_port
+        self._data_port = data_port
         self._ctx       = zmq.Context()
 
         self._ctrl = self._ctx.socket(zmq.REQ)
@@ -390,8 +391,8 @@ def cmd_devices(_cmd, cfg, client):
     print("\n  JACK ports:")
     out_name = playback[out_ch] if out_ch < len(playback) else "??"
     in_name  = capture[in_ch]  if in_ch  < len(capture)  else "??"
-    out_suf  = (f"  ->  {out_sticky}" if out_sticky else "") + sticky_note(out_sticky, playback, out_ch)
-    in_suf   = (f"  ->  {in_sticky}"  if in_sticky  else "") + sticky_note(in_sticky,  capture,  in_ch)
+    out_suf  = (f"  ->  {out_sticky}" if out_sticky and out_sticky != out_name else "") + sticky_note(out_sticky, playback, out_ch)
+    in_suf   = (f"  ->  {in_sticky}"  if in_sticky  and in_sticky  != in_name  else "") + sticky_note(in_sticky,  capture,  in_ch)
     print(f"  Configured:  output ch {out_ch}  ->  {out_name}{hw(hw_play, out_ch)}{out_suf}")
     print(f"               input  ch {in_ch}  ->  {in_name}{hw(hw_cap, in_ch)}{in_suf}")
     print("\n  Playback:")

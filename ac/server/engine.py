@@ -417,8 +417,8 @@ def run_server(ctrl_port=CTRL_PORT, data_port=DATA_PORT):
     connections = {}   # endpoint -> connect_time (float)
     state = {
         "bind_addr":    bind_addr,
-        "ctrl_ep":      f"tcp://{bind_addr}:{ctrl_port}",
-        "data_ep":      f"tcp://{bind_addr}:{data_port}",
+        "ctrl_ep":      sock_ctrl.last_endpoint.decode(),
+        "data_ep":      sock_data.last_endpoint.decode(),
         "gpio_handler": None,
     }
 
@@ -452,26 +452,32 @@ def run_server(ctrl_port=CTRL_PORT, data_port=DATA_PORT):
         new_data_ep = f"tcp://{new_addr}:{data_port}"
         try:
             sock_ctrl.unbind(old_ctrl_ep)
+            time.sleep(0.05)   # let OS release the port before rebinding
             sock_ctrl.bind(new_ctrl_ep)
+            # ZMQ may intern the endpoint differently (e.g. * → 0.0.0.0);
+            # use last_endpoint so future unbind calls use the canonical form.
+            real_ctrl_ep = sock_ctrl.last_endpoint.decode()
         except zmq.ZMQError:
             try: sock_ctrl.bind(old_ctrl_ep)
             except Exception: pass
             return False
         try:
             sock_data.unbind(old_data_ep)
+            time.sleep(0.05)
             sock_data.bind(new_data_ep)
+            real_data_ep = sock_data.last_endpoint.decode()
         except zmq.ZMQError:
             # rollback ctrl then restore data
             try: sock_data.bind(old_data_ep)
             except Exception: pass
-            try: sock_ctrl.unbind(new_ctrl_ep)
+            try: sock_ctrl.unbind(real_ctrl_ep)
             except Exception: pass
             try: sock_ctrl.bind(old_ctrl_ep)
             except Exception: pass
             return False
         state["bind_addr"] = new_addr
-        state["ctrl_ep"]   = new_ctrl_ep
-        state["data_ep"]   = new_data_ep
+        state["ctrl_ep"]   = real_ctrl_ep
+        state["data_ep"]   = real_data_ep
         return True
 
     def _drain_pub():
@@ -505,6 +511,8 @@ def run_server(ctrl_port=CTRL_PORT, data_port=DATA_PORT):
         t  = threading.Thread(target=target, args=(args[0], ev) + args[1:], daemon=True)
         t.start()
         workers[name] = {"thread": t, "stop": ev}
+
+    _post_send = []   # deferred actions executed after sock_ctrl.send()
 
     def handle(cmd):
         nonlocal cfg
@@ -570,8 +578,7 @@ def run_server(ctrl_port=CTRL_PORT, data_port=DATA_PORT):
 
         if name == "devices":
             try:
-                _fp, _, _ = get_port_helpers(reset=True)
-                playback, capture = _fp()
+                playback, capture = find_ports()
                 return {"ok": True,
                         "playback":       playback,
                         "capture":        capture,
@@ -701,18 +708,14 @@ def run_server(ctrl_port=CTRL_PORT, data_port=DATA_PORT):
         if name == "server_enable":
             save_config({"server_enabled": True})
             cfg = load_config()
-            _rebind("*")
-            addr = state["bind_addr"]
-            return {"ok": True, "bind_addr": addr,
-                    "listen_mode": "public" if addr == "*" else "local"}
+            _post_send.append(lambda: _rebind("*"))
+            return {"ok": True, "bind_addr": "*", "listen_mode": "public"}
 
         if name == "server_disable":
             save_config({"server_enabled": False})
             cfg = load_config()
-            _rebind("127.0.0.1")
-            addr = state["bind_addr"]
-            return {"ok": True, "bind_addr": addr,
-                    "listen_mode": "public" if addr == "*" else "local"}
+            _post_send.append(lambda: _rebind("127.0.0.1"))
+            return {"ok": True, "bind_addr": "127.0.0.1", "listen_mode": "local"}
 
         if name == "server_connections":
             _cleanup_workers()
@@ -783,8 +786,12 @@ def run_server(ctrl_port=CTRL_PORT, data_port=DATA_PORT):
                     {"ok": False, "error": "invalid JSON"}).encode())
                 continue
 
+            _post_send.clear()
             reply = handle(cmd)
             sock_ctrl.send(json.dumps(reply).encode())
+            for _fn in _post_send:
+                _fn()
+            _post_send.clear()
 
     except KeyboardInterrupt:
         for w in workers.values():

@@ -345,6 +345,58 @@ def test_generate_bad_channel_returns_error(server_client):
     assert "port" in ack.get("error", "").lower() or "range" in ack.get("error", "").lower()
 
 
+def test_server_enable_disable(server_client):
+    """server_enable must reply successfully (not timeout due to rebind) and
+    server_disable must revert to local mode."""
+    client = server_client
+
+    ack = client.send_cmd({"cmd": "server_enable"}, timeout_ms=3000)
+    assert ack is not None, "server_enable timed out (reply lost before rebind?)"
+    assert ack["ok"] is True
+    assert ack.get("listen_mode") == "public"
+
+    # Give the server a moment to rebind and ZMQ to reconnect, then verify it still responds
+    time.sleep(0.4)
+    status = client.send_cmd({"cmd": "status"}, timeout_ms=2000)
+    assert status is not None
+    assert status["listen_mode"] == "public"
+
+    # Restore to local
+    ack2 = client.send_cmd({"cmd": "server_disable"}, timeout_ms=3000)
+    assert ack2 is not None, "server_disable timed out"
+    assert ack2["ok"] is True
+    assert ack2.get("listen_mode") == "local"
+
+    time.sleep(0.4)
+    status2 = client.send_cmd({"cmd": "status"}, timeout_ms=2000)
+    assert status2 is not None
+    assert status2["listen_mode"] == "local"
+
+
+def test_server_enable_remote_client_can_connect(server_client):
+    """After server_enable a second client connecting via hostname must work."""
+    import socket as _socket
+    from ac.client.ac import AcClient as _AcClient
+
+    ack = server_client.send_cmd({"cmd": "server_enable"}, timeout_ms=3000)
+    assert ack is not None and ack["ok"]
+    time.sleep(0.15)
+
+    hostname = _socket.gethostname()
+    remote_client = _AcClient(host=hostname,
+                              ctrl_port=server_client._ctrl_port,
+                              data_port=server_client._data_port)
+    try:
+        r = remote_client.send_cmd({"cmd": "status"}, timeout_ms=2000)
+        assert r is not None, "remote client got no response from public server"
+        assert r["ok"] is True
+        assert r["listen_mode"] == "public"
+    finally:
+        remote_client.close()
+        server_client.send_cmd({"cmd": "server_disable"}, timeout_ms=3000)
+        time.sleep(0.1)
+
+
 def test_monitor_spectrum_frames(server_client):
     """Spectrum monitor should stream spectrum frames."""
     client = server_client
