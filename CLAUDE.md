@@ -92,3 +92,40 @@ These shell scripts live in `scripts/` and are independent of `thd_tool`. They w
 ### `DefaultInputGain` resets
 
 Sets Mic-AN1/AN2 gain to 0, Line-IN3/4 sensitivity to +4 dBu, Line-IN3/4 gain to 0, PAD off, and all Main-Out channels to 0 except AN1/AN2/PH3/PH4 which are set to 8192 (unity).
+
+## ds — diagnostics session manager
+
+Companion tool to `ac`. Lives in `ds/`. Installed as the `ds` command via setup.py.
+
+**Relationship to ac:**
+- Reads `~/.config/thd_tool/config.json` to get the active session name (`session` key)
+- Reads `~/.local/share/thd_tool/sessions/<name>/` for ac-produced files
+- Never writes to ac config or session dirs outside its own `ds/` subdirectory
+- No ZMQ, no dependency on thd_tool internals
+
+**Session directory layout:**
+```
+~/.local/share/thd_tool/sessions/<name>/
+  *.csv, *.png          # ac owns these
+  ds/
+    session.json        # device metadata, notes, file registry
+    ai_log.json         # history of all AI calls
+    files/              # scraped/fetched/added files, original formats
+```
+
+**Commands:**
+```
+ds status               # active session, file counts
+ds ls                   # list ac files and ds files
+ds note "<text>"        # add timestamped note
+ds notes                # list all notes
+ds add <path>           # add local file into session
+ds rm <filename>        # remove file from session
+ds fetch [query]        # scrape web for manuals/datasheets/forums
+ds analyze              # full AI analysis of session
+ds ask "<question>"     # ad-hoc AI query with session context
+ds diff <a> <b>         # compare two sessions, AI interprets delta
+ds log [--last N]       # show AI interaction history
+```
+
+**Requires:** ANTHROPIC_API_KEY env var for any AI commands.

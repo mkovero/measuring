@@ -10,6 +10,7 @@ setup(
         "console_scripts": [
             "ac = thd_tool.client.ac:main",
             "thd = thd_tool.cli:main",   # legacy
+            "ds = ds.cli:main",
         ],
     },
 )
