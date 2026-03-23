@@ -30,7 +30,7 @@ DATA_PORT  = 5557
 
 # Concurrency classification
 OUTPUT_CMDS = {"generate", "generate_pink", "sweep_level", "sweep_frequency"}
-INPUT_CMDS  = {"monitor_thd", "monitor_spectrum"}
+INPUT_CMDS  = {"monitor_spectrum"}
 EXCLUSIVE   = {"plot", "calibrate", "transfer"}
 AUDIO_CMDS  = OUTPUT_CMDS | INPUT_CMDS | EXCLUSIVE
 
@@ -211,43 +211,6 @@ def _worker_plot(pub_q, stop_ev, cfg, cmd):
         engine.set_silence()
         engine.stop()
     _pub(pub_q, "done", {"cmd": "plot", "n_points": n, "xruns": xruns})
-
-
-def _worker_monitor_thd(pub_q, stop_ev, cfg, cmd):
-    freq     = cmd["freq_hz"]
-    interval = cmd.get("interval", 1.0)
-    cal      = Calibration.load(output_channel=cfg["output_channel"],
-                                input_channel=cfg["input_channel"])
-    duration = max(0.1, interval)
-    in_port  = cmd["_in_port"]
-    engine = JackEngine()
-    try:
-        engine.start(input_port=in_port)
-        while not stop_ev.is_set():
-            data = engine.capture_block(duration)
-            rec  = data.reshape(-1, 1)
-            r    = analyze(rec, sr=engine.samplerate, fundamental=freq)
-            if "error" in r:
-                continue
-            in_vrms = cal.in_vrms(r["linear_rms"]) if (cal and cal.input_ok) else None
-            in_dbu  = vrms_to_dbu(in_vrms)         if in_vrms is not None    else None
-            _pub(pub_q, "data", {
-                "type":              "thd_point",
-                "cmd":               "monitor_thd",
-                "freq_hz":           freq,
-                "thd_pct":           float(r["thd_pct"]),
-                "thdn_pct":          float(r["thdn_pct"]),
-                "fundamental_dbfs":  float(r["fundamental_dbfs"]),
-                "in_dbu":            in_dbu,
-                "clipping":          bool(r.get("clipping", False)),
-                "xruns":             engine.xruns,
-            })
-    except Exception as e:
-        _pub(pub_q, "error", {"cmd": "monitor_thd", "message": str(e)})
-        return
-    finally:
-        engine.stop()
-    _pub(pub_q, "done", {"cmd": "monitor_thd"})
 
 
 def _worker_monitor_spectrum(pub_q, stop_ev, cfg, cmd):
@@ -724,7 +687,7 @@ def run_server(ctrl_port=CTRL_PORT, data_port=DATA_PORT):
             cmd["_in_port"]  = in_port
             cmd["_ref_port"] = ref_port
 
-        if name in ("monitor_thd", "monitor_spectrum"):
+        if name == "monitor_spectrum":
             try:
                 _, capture = find_ports()
                 in_port = resolve_port(capture, cfg.get("input_port"), cfg["input_channel"])
@@ -763,10 +726,6 @@ def run_server(ctrl_port=CTRL_PORT, data_port=DATA_PORT):
                     "out_port": cmd["_out_port"],
                     "in_port":  cmd["_in_port"],
                     "ref_port": cmd["_ref_port"]}
-
-        if name == "monitor_thd":
-            _spawn("monitor_thd", _worker_monitor_thd, pub_q, cfg, cmd)
-            return {"ok": True, "in_port": cmd["_in_port"]}
 
         if name == "monitor_spectrum":
             _spawn("monitor_spectrum", _worker_monitor_spectrum, pub_q, cfg, cmd)

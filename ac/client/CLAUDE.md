@@ -29,8 +29,7 @@ Cross-subpackage imports:
 ```
 ac sweep level   <start:level> <stop:level> <freq:freq> [<step:step>]
 ac sweep freq    <start:freq>  <stop:freq>  <level:level> [<ppd:ppd>]
-ac monitor thd   <level:level> <freq:freq>  [<interval:time>]
-ac monitor spectrum <level> <freq> [<interval>]
+ac monitor       [<start:freq> <end:freq>] [<interval:time>]
 ac generate sine [<channels>] <level> [<freq>]
 ac calibrate     [output N] [input N] [<level>]
 ```

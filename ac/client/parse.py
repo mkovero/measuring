@@ -12,8 +12,7 @@
 # Grammar:
 #   ac sweep level   <start:level> <stop:level> <freq:freq> [<step:step>]
 #   ac sweep freq    <start:freq>  <stop:freq>  <level:level> [<ppd:ppd>]
-#   ac monitor thd   <freq:freq>   [<interval:time>]   (input-only)
-#   ac monitor spectrum <freq:freq> [<interval:time>]  (input-only)
+#   ac monitor       [<start:freq> <end:freq>] [<interval:time>]  (input-only)
 #   ac generate sine <level:level> [<freq:freq>]
 #   ac generate pink <level:level>
 #   ac calibrate     [<level:level>]

@@ -27,7 +27,7 @@ Shared modules (at `ac/` root, imported as `from ..constants import ...`):
 
 Topics: `data`, `done`, `error`, `cal_prompt`, `cal_done`
 
-Commands: `status`, `quit`, `stop`, `devices`, `setup`, `get_calibration`, `list_calibrations`, `sweep_level`, `sweep_frequency`, `monitor_thd`, `monitor_spectrum`, `generate`, `calibrate`, `cal_reply`, `dmm_read`
+Commands: `status`, `quit`, `stop`, `devices`, `setup`, `get_calibration`, `list_calibrations`, `sweep_level`, `sweep_frequency`, `monitor_spectrum`, `generate`, `calibrate`, `cal_reply`, `dmm_read`
 
 ## Calibration model
 

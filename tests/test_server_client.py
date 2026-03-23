@@ -186,21 +186,6 @@ def test_sweep_frequency_frames(server_client):
 # Busy guard
 # ---------------------------------------------------------------------------
 
-def test_monitor_thd_port_info(server_client):
-    """monitor_thd ack must include in_port (input-only — no out_port)."""
-    client = server_client
-    ack = client.send_cmd({
-        "cmd":        "monitor_thd",
-        "freq_hz":    1000.0,
-        "level_dbfs": -20.0,
-        "interval":   0.05,
-    })
-    assert ack["ok"] is True
-    assert "in_port"  in ack and ack["in_port"]
-    assert "out_port" not in ack   # monitor is input-only
-    _stop_and_drain(client)
-
-
 def test_bad_channel_returns_error(server_client):
     """A channel index out of range must return ok=False immediately (no crash)."""
     client = server_client
@@ -226,9 +211,8 @@ def test_busy_guard(server_client):
 
     # Start an infinite monitor
     ack1 = client.send_cmd({
-        "cmd":        "monitor_thd",
+        "cmd":        "monitor_spectrum",
         "freq_hz":    1000.0,
-        "level_dbfs": -20.0,
         "interval":   0.05,
     })
     assert ack1["ok"] is True
@@ -276,43 +260,7 @@ def test_stop_sweep(server_client):
 
 
 # ---------------------------------------------------------------------------
-# Monitor THD
-# ---------------------------------------------------------------------------
-
-def test_monitor_thd_frames(server_client):
-    """Monitor should stream thd_point frames."""
-    client = server_client
-
-    ack = client.send_cmd({
-        "cmd":        "monitor_thd",
-        "freq_hz":    1000.0,
-        "level_dbfs": -20.0,
-        "interval":   0.05,
-    })
-    assert ack["ok"] is True
-
-    thd_frames = []
-    for _ in range(20):
-        try:
-            topic, frame = client.recv_data(timeout_ms=3000)
-        except TimeoutError:
-            break
-        if topic == "data" and frame.get("type") == "thd_point":
-            thd_frames.append(frame)
-            if len(thd_frames) >= 3:
-                break
-
-    _stop_and_drain(client)
-
-    assert len(thd_frames) >= 1
-    f = thd_frames[0]
-    assert "thd_pct"  in f
-    assert "thdn_pct" in f
-    assert "freq_hz"  in f
-
-
-# ---------------------------------------------------------------------------
-# Monitor spectrum
+# Generate
 # ---------------------------------------------------------------------------
 
 def test_generate_port_info(server_client):
