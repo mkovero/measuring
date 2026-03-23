@@ -113,9 +113,6 @@ class Calibration:
                 cal.vrms_at_0dbfs_out = data.get("vrms_at_0dbfs_out")
                 cal.vrms_at_0dbfs_in  = data.get("vrms_at_0dbfs_in")
                 cal.ref_dbfs          = data.get("ref_dbfs", -10.0)
-                rc = data.get("response_curve")
-                if rc:
-                    cal.response_curve = [(float(f), float(d)) for f, d in rc]
                 return cal
         return None
 
@@ -140,9 +137,6 @@ class Calibration:
             cal.vrms_at_0dbfs_out = data.get("vrms_at_0dbfs_out")
             cal.vrms_at_0dbfs_in  = data.get("vrms_at_0dbfs_in")
             cal.ref_dbfs          = data.get("ref_dbfs", -10.0)
-            rc = data.get("response_curve")
-            if rc:
-                cal.response_curve = [(float(f), float(d)) for f, d in rc]
             result.append(cal)
         return result
 

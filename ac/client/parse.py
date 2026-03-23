@@ -75,17 +75,6 @@ def _parse_time(s):
     raise ValueError(f"not a time: {s!r}")
 
 
-def _parse_step(s):
-    """Return dB step as float or raise ValueError."""
-    s = s.lower().strip()
-    try:
-        if s.endswith("db"):
-            return float(s[:-2])
-    except ValueError:
-        pass
-    raise ValueError(f"not a dB step: {s!r}")
-
-
 def _parse_ppd(s):
     """Return points-per-decade as int or raise ValueError."""
     s = s.lower().strip()
@@ -99,9 +88,8 @@ def _parse_ppd(s):
 
 def classify(token):
     """Return (type, value) for a token, or raise ValueError if unrecognised."""
-    for kind, fn in [("ppd", _parse_ppd), ("step", _parse_step),
-                     ("time", _parse_time), ("level", _parse_level),
-                     ("freq", _parse_freq)]:
+    for kind, fn in [("ppd", _parse_ppd), ("time", _parse_time),
+                     ("level", _parse_level), ("freq", _parse_freq)]:
         try:
             return (kind, fn(token))
         except ValueError:

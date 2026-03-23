@@ -12,7 +12,7 @@ from datetime import datetime
 import numpy as np
 
 from .parse        import parse, ParseError, USAGE
-from ..config      import load as load_config, save as save_config, show as show_config
+from ..config      import load as load_config, save as save_config
 from ..config      import session_dir, SESSION_BASE
 from .io           import save_csv, print_summary
 from .plotting     import plot_results

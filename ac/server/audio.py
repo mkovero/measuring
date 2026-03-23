@@ -93,10 +93,6 @@ class JackEngine:
         if reference_port and self._ref_port is not None:
             self._client.connect(reference_port, self._ref_port)
 
-    # Keep backward-compatible single-port kwarg
-    def start_mono(self, output_port=None, input_port=None):
-        self.start(output_ports=output_port, input_port=input_port)
-
     def stop(self):
         try:
             self._client.deactivate()
