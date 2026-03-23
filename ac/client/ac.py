@@ -515,20 +515,7 @@ def cmd_calibrate(cmd, cfg, client):
     try:
         while True:
             topic, frame = client.recv_data(timeout_ms=120000)
-            if topic == "cal_progress":
-                if "n" in frame:
-                    n, total = frame["n"], frame["total"]
-                    hz = frame.get("freq_hz", 0)
-                    freq_str = f"{hz/1000:.1f} kHz" if hz >= 1000 else f"{hz:.0f} Hz"
-                    bar_w  = 24
-                    filled = int(bar_w * n / total)
-                    bar    = "█" * filled + "░" * (bar_w - filled)
-                    end    = "\n" if n == total else ""
-                    print(f"\r  Response curve  [{bar}] {n:>2}/{total}  {freq_str:<9}",
-                          end=end, flush=True)
-                else:
-                    print(f"\n  {frame.get('text', 'Working...')}", flush=True)
-            elif topic == "cal_prompt":
+            if topic == "cal_prompt":
                 print(f"\n  {frame['text']}\n")
                 dmm_vrms = frame.get("dmm_vrms")
                 if dmm_vrms is not None:

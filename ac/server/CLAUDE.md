@@ -14,9 +14,7 @@ Entry point: `ac server enable` (blocking) or auto-spawned by the client as a su
 | `audio.py` | `JackEngine` (JACK real-time I/O), `find_ports()`, `port_name()`, backend factory (`get_engine_class()`, `get_port_helpers()`) |
 | `sd_audio.py` | `SoundDeviceEngine` (PortAudio fallback), matching duck-typed contract |
 | `analysis.py` | `analyze(recording, sr, fundamental)` — FFT THD/THD+N |
-| `jack_measure.py` | `jack_sweep_level/frequency/monitor` — legacy direct functions |
 | `jack_calibration.py` | `Calibration` class + `run_calibration_jack_zmq()` |
-| `signal.py` | `make_sine()` — sine buffer generator |
 | `dmm.py` | SCPI socket client for Keysight 34461A DMM |
 
 Shared modules (at `ac/` root, imported as `from ..constants import ...`):
