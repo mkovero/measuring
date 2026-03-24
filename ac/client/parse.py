@@ -450,7 +450,7 @@ def parse(argv):
             raise ParseError(f"new: unexpected extra args: {args}")
         return {"cmd": "session_new", "name": name}
 
-    elif verb == "sessions":
+    elif verb in ("sessions", "list"):
         return {"cmd": "session_list"}
 
     elif verb == "use":
