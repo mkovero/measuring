@@ -518,8 +518,12 @@ Short forms:  s(weep) m(onitor) g(enerate) c(alibrate) p(lot) tf/tr(ansfer)
               l(evel) f(requency) si(ne) pk(ink) sh(ow)
               se(tup) d(evices) st(op) ref(erence)
 
-Sessions:  new <name>  sessions  use <name>  rm <name>  diff <a> <b>
-Server:    server enable|disable|connections|<host>
+Sessions:
+  new|use|ls|rm|diff                                            create, switch, list, remove, compare
+
+Server:
+  server [<enable|disable>] [connections]                       enable/disable server, show connections
+  server <host>                                                 connect to remote host
 
 Examples:
   ac setup output 11 input 0
