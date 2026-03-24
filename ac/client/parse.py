@@ -497,19 +497,19 @@ USAGE = """\
 ac — audio measurement CLI
 
 Commands:
-  devices                                       list available audio ports
-  setup [output <N>] [input <N>] [reference <N>]
-        [range <startFreq stopFreq>]
-        [dmm <ipaddr>] [gpio <serialDevice>]    configure ports and peripherals
-  calibrate [output <N> input <N>] [show]       level calibration
-  generate <sine|pink> [ch] [level] [freq]      output sine/pink
-  sweep level <start> <stop> [freq]             sweep level with fixed frequency
-  sweep frequency <startFreq stopFreq> [level]  sweep frequency with fixed level
-  plot [<startFreq stopFreq>] [level] [ppd]     point-by-point THD measurement
-  transfer [<startFreq stopFreq>] [level]       H1 transfer function (requires reference)
-  monitor [<startFreq stopFreq>] [interval]     live spectrum (TUI or show)
-  stop                                          stop active generator/measurement
-  dmm                                           read AC Vrms from configured DMM over SCPI
+  devices                                                       list available audio ports
+  calibrate       [output <N> input <N>] [show]                 level calibration
+  generate        <sine|pink> [ch] [level] [freq]               output sine/pink
+  sweep level     <start> <stop> [freq]                         sweep level with fixed frequency
+  sweep frequency <freqStart freqStop> [level]                  sweep frequency with fixed level
+  plot            [<freqStart freqStop>] [level] [ppd] [show]   per point THD measurement
+  transfer        [<freqStart freqStop>] [level]                H1 transfer function (requires reference)
+  monitor         [<freqStart freqStop>] [interval] [show]      live spectrum
+  stop                                                          stop active generator/measurement
+  dmm                                                           read AC Vrms from configured DMM over SCPI
+  setup           [output <N>] [input <N>] [reference <N>]
+                  [range <freqStart freqStop>]
+                  [dmm <ipaddr>] [gpio <serialDevice>]
 
 Units:  20hz 1khz  |  0dbu -12dbfs 775mvrms 1vrms  |  1s  |  10ppd
         append "show" to open pyqtgraph window
