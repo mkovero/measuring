@@ -1,8 +1,9 @@
 # plotting.py
 import warnings
 import numpy as np
+import os
 import matplotlib
-matplotlib.use("TkAgg")
+matplotlib.use(os.environ.get("MPLBACKEND", "Agg"))
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 from ..conversions import vrms_to_dbu, fmt_vrms, dbfs_to_vrms

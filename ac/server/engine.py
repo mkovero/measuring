@@ -31,7 +31,7 @@ DATA_PORT  = 5557
 # Concurrency classification
 OUTPUT_CMDS = {"generate", "generate_pink", "sweep_level", "sweep_frequency"}
 INPUT_CMDS  = {"monitor_spectrum"}
-EXCLUSIVE   = {"plot", "calibrate", "transfer"}
+EXCLUSIVE   = {"plot", "calibrate", "transfer", "probe"}
 AUDIO_CMDS  = OUTPUT_CMDS | INPUT_CMDS | EXCLUSIVE
 
 
@@ -302,6 +302,106 @@ def _worker_generate_pink(pub_q, stop_ev, cfg, cmd):
             engine.set_silence()
             engine.stop()
     _pub(pub_q, "done", {"cmd": "generate_pink"})
+
+
+def _worker_probe(pub_q, stop_ev, cfg, cmd):
+    """Auto-detect analog outputs (via DMM) and loopback pairs (via capture)."""
+    freq       = 1000.0
+    ref_dbfs   = -10.0
+    amplitude  = 10.0 ** (ref_dbfs / 20.0)
+    playback   = cmd["_playback"]
+    capture    = cmd["_capture"]
+    dmm_host   = cfg.get("dmm_host")
+    threshold_vrms = 0.010   # 10 mV — below this is digital/unconnected
+
+    engine = None
+    try:
+        engine = JackEngine(client_name="ac-probe-sweep")
+        engine.set_tone(freq, amplitude)
+        # Register one output port, activate, then disconnect for manual switching
+        engine.start(output_ports=playback[0])
+        engine.disconnect_output(playback[0])
+        time.sleep(0.1)
+
+        # -- Phase 1: DMM output scan --
+        analog_channels = []
+        if dmm_host:
+            from . import dmm as _dmm
+            _pub(pub_q, "data", {"cmd": "probe", "phase": "output_start",
+                                 "n_ports": len(playback)})
+            prev_port = None
+            for i, port in enumerate(playback):
+                if stop_ev.is_set():
+                    break
+                engine.connect_output(port)
+                time.sleep(0.4)
+                try:
+                    vrms = _dmm.read_ac_vrms(dmm_host, n=3)
+                except Exception:
+                    vrms = None
+                engine.disconnect_output(port)
+
+                is_analog = vrms is not None and vrms > threshold_vrms
+                if is_analog:
+                    analog_channels.append(i)
+                _pub(pub_q, "data", {"cmd": "probe", "phase": "output",
+                                     "channel": i, "port": port,
+                                     "vrms": vrms, "analog": is_analog})
+        else:
+            _pub(pub_q, "data", {"cmd": "probe", "phase": "output_skip",
+                                 "message": "no DMM configured — skipping output scan"})
+            # Without DMM, treat all ports as candidates
+            analog_channels = list(range(len(playback)))
+
+        # -- Phase 2: Loopback detection --
+        if not stop_ev.is_set():
+            _pub(pub_q, "data", {"cmd": "probe", "phase": "loopback_start",
+                                 "n_outputs": len(analog_channels),
+                                 "n_inputs": len(capture)})
+
+        loopback_pairs = []
+        for i in analog_channels:
+            if stop_ev.is_set():
+                break
+            engine.connect_output(playback[i])
+            time.sleep(0.15)
+
+            for j, cap_port in enumerate(capture):
+                if stop_ev.is_set():
+                    break
+                engine.reconnect_input(cap_port)
+                # Flush stale data, capture fresh block
+                engine._ringbuf.read(engine._ringbuf.read_space)
+                time.sleep(0.05)
+                try:
+                    data = engine.capture_block(0.05)
+                    rms = float(np.sqrt(np.mean(data.astype(np.float64) ** 2)))
+                    level_dbfs = 20.0 * np.log10(max(rms, 1e-12))
+                except Exception:
+                    level_dbfs = -120.0
+
+                if level_dbfs > -30.0:
+                    loopback_pairs.append({
+                        "out_ch": i, "out_port": playback[i],
+                        "in_ch": j,  "in_port": cap_port,
+                        "level_dbfs": round(level_dbfs, 1),
+                    })
+                    _pub(pub_q, "data", {"cmd": "probe", "phase": "loopback",
+                                         "out_ch": i, "out_port": playback[i],
+                                         "in_ch": j, "in_port": cap_port,
+                                         "level_dbfs": round(level_dbfs, 1)})
+
+            engine.disconnect_output(playback[i])
+
+        _pub(pub_q, "done", {"cmd": "probe",
+                             "analog_channels": analog_channels,
+                             "loopback": loopback_pairs})
+    except Exception as e:
+        _pub(pub_q, "error", {"cmd": "probe", "message": str(e)})
+    finally:
+        if engine is not None:
+            engine.set_silence()
+            engine.stop()
 
 
 def _worker_transfer(pub_q, stop_ev, cfg, cmd):
@@ -707,6 +807,14 @@ def run_server(ctrl_port=CTRL_PORT, data_port=DATA_PORT):
                 return {"ok": False, "error": f"port error: {e}"}
             cmd["_out_ports"] = out_ports
 
+        if name == "probe":
+            try:
+                playback, capture = find_ports()
+            except Exception as e:
+                return {"ok": False, "error": f"port error: {e}"}
+            cmd["_playback"] = playback
+            cmd["_capture"]  = capture
+
         if name == "sweep_level":
             _spawn("sweep_level", _worker_sweep_level_gen, pub_q, cfg, cmd)
             return {"ok": True, "out_port": cmd["_out_port"]}
@@ -738,6 +846,12 @@ def run_server(ctrl_port=CTRL_PORT, data_port=DATA_PORT):
         if name == "generate_pink":
             _spawn("generate_pink", _worker_generate_pink, pub_q, cfg, cmd)
             return {"ok": True, "out_ports": cmd["_out_ports"]}
+
+        if name == "probe":
+            _spawn("probe", _worker_probe, pub_q, cfg, cmd)
+            return {"ok": True,
+                    "n_playback": len(cmd["_playback"]),
+                    "n_capture":  len(cmd["_capture"])}
 
         if name == "calibrate":
             # Drain stale cal_q entries from previous stop commands

@@ -1321,6 +1321,103 @@ def cmd_session_diff(cmd, cfg):
         print()
 
 
+def cmd_probe(_cmd, cfg, client):
+    from ..conversions import fmt_vrms
+    ack = _check_ack(client.send_cmd({"cmd": "probe"}, timeout_ms=10000), "probe")
+    n_play = ack.get("n_playback", 0)
+    n_cap  = ack.get("n_capture", 0)
+
+    card = _detect_card_name()
+    play_names, cap_names = _KNOWN_LAYOUTS.get(card, (None, None)) if card else (None, None)
+
+    def _label(names, idx):
+        if names and idx < len(names):
+            return names[idx]
+        return ""
+
+    analog_channels = []
+    loopback_pairs  = []
+
+    print(f"\n  Probing {n_play} output / {n_cap} input ports ...\n")
+    try:
+        while True:
+            topic, frame = client.recv_data(timeout_ms=120000)
+            if topic != "data" and topic != "done" and topic != "error":
+                continue
+
+            phase = frame.get("phase", "")
+
+            if phase == "output_start":
+                print(f"  Phase 1: Output scan (DMM)  [{frame['n_ports']} ports]")
+                print(f"  {'Ch':>3}  {'Port':<24} {'Name':<9}  {'Voltage':>12}")
+                print(f"  {'---':>3}  {'----':<24} {'----':<9}  {'-------':>12}")
+
+            elif phase == "output_skip":
+                print(f"  {frame['message']}")
+
+            elif phase == "output":
+                ch   = frame["channel"]
+                port = frame["port"]
+                vrms = frame.get("vrms")
+                ok   = frame.get("analog", False)
+                lbl  = _label(play_names, ch)
+                if ok:
+                    analog_channels.append(ch)
+                v_str = fmt_vrms(vrms) if vrms is not None else "err"
+                tag   = "  ANALOG" if ok else ""
+                print(f"  {ch:>3}  {port:<24} {lbl:<9}  {v_str:>12}{tag}")
+
+            elif phase == "loopback_start":
+                n_out = frame["n_outputs"]
+                n_in  = frame["n_inputs"]
+                print(f"\n  Phase 2: Loopback scan  [{n_out} outputs x {n_in} inputs]")
+
+            elif phase == "loopback":
+                o_ch = frame["out_ch"]
+                i_ch = frame["in_ch"]
+                db   = frame["level_dbfs"]
+                o_lbl = _label(play_names, o_ch)
+                i_lbl = _label(cap_names, i_ch)
+                loopback_pairs.append(frame)
+                print(f"    OUT {o_ch} {o_lbl:<6} -> IN {i_ch} {i_lbl:<6}  {db:+.1f} dBFS")
+
+            if topic == "done":
+                analog_channels = frame.get("analog_channels", analog_channels)
+                loopback_pairs  = frame.get("loopback", loopback_pairs)
+                break
+            elif topic == "error":
+                print(f"\n  error: {frame.get('message')}")
+                return
+
+    except TimeoutError:
+        print("\n  error: timeout waiting for probe data")
+        return
+    except KeyboardInterrupt:
+        client.send_cmd({"cmd": "stop"})
+        print("\n  Stopped.")
+        return
+
+    # Summary
+    print(f"\n  Summary:")
+    if analog_channels:
+        labels = [f"{ch}({_label(play_names, ch)})" if _label(play_names, ch) else str(ch)
+                  for ch in analog_channels]
+        print(f"    Analog outputs (DMM): {', '.join(labels)}")
+    if loopback_pairs:
+        print(f"    Loopback pairs: {len(loopback_pairs)}")
+        for lp in loopback_pairs:
+            o = lp["out_ch"]
+            i = lp["in_ch"]
+            print(f"      output {o} -> input {i}")
+        # Suggest setup for the first pair
+        first = loopback_pairs[0]
+        print(f"\n    Suggested:  ac setup output {first['out_ch']} input {first['in_ch']}")
+    elif not analog_channels:
+        print("    No analog outputs or loopback pairs detected.")
+        print("    Check: JACK running? DMM connected? Cables plugged in?")
+    print()
+
+
 def cmd_gpio(cmd, cfg, client):
     if cmd.get("gpio_log"):
         print("  [GPIO log — Ctrl-C to stop]\n")
@@ -1372,6 +1469,7 @@ HANDLERS = {
     "server_enable":      cmd_server_enable,
     "server_disable":     cmd_server_disable,
     "server_connections": cmd_server_connections,
+    "probe":              cmd_probe,
     "gpio":               cmd_gpio,
 }
 

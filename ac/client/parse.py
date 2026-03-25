@@ -137,6 +137,7 @@ ABBREVS = {
     "g": "generate", "gen": "generate",
     "c": "calibrate", "cal": "calibrate",
     "p": "plot", "pl": "plot",
+    "pr": "probe",
     "ser": "server",
     # session verbs
     "n": "new",
@@ -478,6 +479,11 @@ def parse(argv):
             raise ParseError(f"diff: unexpected extra args: {args}")
         return {"cmd": "session_diff", "name_a": name_a, "name_b": name_b}
 
+    elif verb == "probe":
+        if args:
+            raise ParseError(f"probe: unexpected argument(s): {args}")
+        return {"cmd": "probe"}
+
     elif verb == "gpio":
         result = {"cmd": "gpio"}
         if args and args[0].lower() == "log":
@@ -486,7 +492,7 @@ def parse(argv):
         return result
 
     else:
-        raise ParseError(f"unknown command: {verb!r}  (sweep | monitor | plot | transfer | generate | calibrate | setup | devices | server | new | sessions | use | rm | diff | gpio)")
+        raise ParseError(f"unknown command: {verb!r}  (sweep | monitor | plot | transfer | generate | calibrate | setup | devices | server | new | sessions | use | rm | diff | probe | gpio)")
 
 
 # ---------------------------------------------------------------------------
@@ -506,6 +512,7 @@ Commands:
   transfer        [<freqStart freqStop>] [level]                H1 transfer function (requires reference)
   monitor         [<freqStart freqStop>] [interval] [show]      live spectrum
   stop                                                          stop active generator/measurement
+  probe                                                         auto-detect analog ports and loopback pairs
   dmm                                                           read AC Vrms from configured DMM over SCPI
   setup           [output <N>] [input <N>] [reference <N>]
                   [range <freqStart freqStop>]
@@ -514,7 +521,7 @@ Commands:
 Units:  20hz 1khz  |  0dbu -12dbfs 775mvrms 1vrms  |  1s  |  10ppd
         append "show" to open pyqtgraph window
 
-Short forms:  s(weep) m(onitor) g(enerate) c(alibrate) p(lot) tf/tr(ansfer)
+Short forms:  s(weep) m(onitor) g(enerate) c(alibrate) p(lot) tf/tr(ansfer) pr(obe)
               l(evel) f(requency) si(ne) pk(ink) sh(ow)
               se(tup) d(evices) st(op) ref(erence)
 

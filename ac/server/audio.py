@@ -2,7 +2,7 @@
 import threading
 import numpy as np
 
-RINGBUFFER_SECONDS = 4
+RINGBUFFER_SECONDS = 12
 
 
 class JackEngine:
@@ -88,10 +88,34 @@ class JackEngine:
 
         for jack_port, hw_port in zip(self._out_ports, out_list):
             self._client.connect(jack_port, hw_port)
+        self._current_input = None
         if input_port:
             self._client.connect(input_port, self._in_port)
+            self._current_input = input_port
         if reference_port and self._ref_port is not None:
             self._client.connect(reference_port, self._ref_port)
+
+    # ------------------------------------------------------------------
+    # Dynamic port connection (used by probe)
+    # ------------------------------------------------------------------
+
+    def connect_output(self, hw_port, port_index=0):
+        self._client.connect(self._out_ports[port_index], hw_port)
+
+    def disconnect_output(self, hw_port, port_index=0):
+        try:
+            self._client.disconnect(self._out_ports[port_index], hw_port)
+        except Exception:
+            pass
+
+    def reconnect_input(self, hw_port):
+        if self._current_input:
+            try:
+                self._client.disconnect(self._current_input, self._in_port)
+            except Exception:
+                pass
+        self._client.connect(hw_port, self._in_port)
+        self._current_input = hw_port
 
     def stop(self):
         try:
@@ -177,9 +201,16 @@ class JackEngine:
         n = int(duration_seconds * self._sr)
         n_bytes = n * 4
         self.start_capture()
-        # Read both ringbuffers
+        # Read both ringbuffers (timeout at 2x expected duration)
+        import time as _time
+        deadline = _time.monotonic() + duration_seconds * 2 + 2
         while (self._ringbuf.read_space < n_bytes
                or self._ref_ringbuf.read_space < n_bytes):
+            if _time.monotonic() > deadline:
+                self.stop_capture()
+                raise RuntimeError(
+                    f"capture_block_stereo timed out: need {n_bytes} bytes, "
+                    f"got meas={self._ringbuf.read_space} ref={self._ref_ringbuf.read_space}")
             threading.Event().wait(0.005)
         meas_raw = self._ringbuf.read(n_bytes)
         ref_raw = self._ref_ringbuf.read(n_bytes)
