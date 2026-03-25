@@ -25,6 +25,33 @@ GREEN   = "#2ecc71"
 YELLOW  = "#f1c40f"
 
 
+def _hz_label(val):
+    """Format a frequency in Hz as a human-readable string."""
+    if val >= 1000:
+        v = val / 1000
+        return f"{v:.0f}k" if v == int(v) else f"{v:.1f}k"
+    return f"{val:.0f}"
+
+
+def FreqAxis(orientation="bottom"):
+    """Factory: returns a pyqtgraph AxisItem with human-readable Hz ticks."""
+    import pyqtgraph as pg
+    import numpy as np
+
+    _MAJOR = [20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000]
+
+    class _FreqAxis(pg.AxisItem):
+        def tickStrings(self, values, scale, spacing):
+            return [_hz_label(10 ** v) for v in values]
+
+        def tickValues(self, minVal, maxVal, size):
+            major = [np.log10(f) for f in _MAJOR
+                     if minVal <= np.log10(f) <= maxVal]
+            return [(0, major)]
+
+    return _FreqAxis(orientation=orientation)
+
+
 def _build_dark_palette(app):
     from pyqtgraph.Qt import QtGui
     pal = QtGui.QPalette()

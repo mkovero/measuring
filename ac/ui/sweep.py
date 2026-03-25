@@ -4,7 +4,7 @@ import numpy as np
 from pyqtgraph.Qt import QtCore, QtWidgets, QtGui
 import pyqtgraph as pg
 
-from .app import BG, PANEL, GRID, TEXT, BLUE, ORANGE, PURPLE, RED, AMBER, GREEN
+from .app import BG, PANEL, GRID, TEXT, BLUE, ORANGE, PURPLE, RED, AMBER, GREEN, FreqAxis
 
 
 class SweepView(QtWidgets.QMainWindow):
@@ -45,30 +45,31 @@ class SweepView(QtWidgets.QMainWindow):
         glw.setBackground(PANEL)
         layout.addWidget(glw, stretch=1)
 
-        def _make_plot(title, ylabel):
-            p = glw.addPlot(title=title)
-            p.setLabel("left",   ylabel, color=TEXT)
+        def _make_plot(title, ylabel, log_freq=False):
+            axisItems = {}
+            if log_freq:
+                axisItems["bottom"] = FreqAxis(orientation="bottom")
+            p = glw.addPlot(title=title, axisItems=axisItems)
+            p.setLabel("left", ylabel, color=TEXT)
             p.showGrid(x=True, y=True, alpha=0.3)
             p.getAxis("left").setStyle(tickFont=_mono_font())
             p.getAxis("bottom").setStyle(tickFont=_mono_font())
-            if self._is_freq:
-                p.setLogMode(x=True, y=False)
+            if log_freq:
                 p.getAxis("bottom").setLabel("Frequency (Hz)", color=TEXT)
             else:
                 p.getAxis("bottom").setLabel("Level (dBu / dBFS)", color=TEXT)
             return p
 
+        use_log = self._is_freq
         self._p_thd  = _make_plot("THD% vs " + ("Freq" if self._is_freq else "Level"),
-                                   "THD (%)")
+                                   "THD (%)", log_freq=use_log)
         self._p_gain = _make_plot("Gain / Response",
-                                   "Gain (dB)")
+                                   "Gain (dB)", log_freq=use_log)
         glw.nextRow()
         self._p_thdn = _make_plot("THD+N% vs " + ("Freq" if self._is_freq else "Level"),
-                                   "THD+N (%)")
+                                   "THD+N (%)", log_freq=use_log)
         self._p_spec  = _make_plot("Spectrum of selected point",
-                                    "Level (dBFS)")
-        self._p_spec.setLogMode(x=True, y=False)
-        self._p_spec.getAxis("bottom").setLabel("Frequency (Hz)", color=TEXT)
+                                    "Level (dBFS)", log_freq=True)
 
         # Curves for top-3 plots
         self._thd_line  = self._p_thd.plot(
@@ -148,10 +149,11 @@ class SweepView(QtWidgets.QMainWindow):
     # ------------------------------------------------------------------
 
     def _x_vals(self):
-        """X-axis values: freq (Hz) for freq sweep, level (dBu or dBFS) for level."""
+        """X-axis values: log10(freq) for freq sweep, level (dBu or dBFS) for level."""
         pts = self._points
         if self._is_freq:
-            return np.array([p.get("freq_hz", p.get("fundamental_hz", 0)) for p in pts])
+            freqs = np.array([p.get("freq_hz", p.get("fundamental_hz", 0)) for p in pts])
+            return np.log10(np.maximum(freqs, 1.0))
         # Level sweep: prefer dBu if calibrated
         if pts and pts[0].get("out_dbu") is not None:
             return np.array([p["out_dbu"] for p in pts])
@@ -206,18 +208,13 @@ class SweepView(QtWidgets.QMainWindow):
         click_x = mp.x()
 
         xs = self._x_vals()
-        if self._is_freq:
-            log_xs = np.log10(np.maximum(xs, 1.0))
-        else:
-            log_xs = xs
 
-        dists = np.abs(log_xs - click_x)
+        dists = np.abs(xs - click_x)
         idx   = int(np.argmin(dists))
         self._selected_idx = idx
         self._show_spectrum(idx)
 
-        sel_x = log_xs[idx]
-        self._sel_line.setPos(sel_x)
+        self._sel_line.setPos(xs[idx])
         self._sel_line.show()
 
     def _show_spectrum(self, idx):
@@ -232,8 +229,7 @@ class SweepView(QtWidgets.QMainWindow):
         spec  = np.array(spec,  dtype=float)
         spec_db = 20.0 * np.log10(np.maximum(spec, 1e-12))
 
-        # Pass raw freqs — _p_spec has setLogMode(x=True)
-        self._spec_curve.setData(freqs, spec_db)
+        self._spec_curve.setData(np.log10(np.maximum(freqs, 1.0)), spec_db)
 
         # Update harmonic markers
         for ln in self._spec_harmonic_lines:

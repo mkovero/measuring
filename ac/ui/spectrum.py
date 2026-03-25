@@ -4,7 +4,7 @@ import numpy as np
 from pyqtgraph.Qt import QtCore, QtWidgets
 import pyqtgraph as pg
 
-from .app import BG, PANEL, GRID, TEXT, BLUE, AMBER, RED
+from .app import BG, PANEL, GRID, TEXT, BLUE, AMBER, RED, FreqAxis
 
 
 # Smoothing constants (mirrored from tui.py)
@@ -51,20 +51,16 @@ class SpectrumView(QtWidgets.QMainWindow):
         layout.addWidget(self._status_label)
 
         # --- Plot ---
-        self._pw = pg.PlotWidget()
+        freq_axis = FreqAxis(orientation="bottom")
+        self._pw = pg.PlotWidget(axisItems={"bottom": freq_axis})
         self._pw.setBackground(PANEL)
         self._pw.setLabel("left",   "Level",     units="dBFS", color=TEXT)
-        self._pw.setLabel("bottom", "Frequency", units="Hz",   color=TEXT)
-        self._pw.setLogMode(x=True, y=False)
+        self._pw.setLabel("bottom", "Frequency (Hz)", color=TEXT)
         self._pw.setXRange(np.log10(20), np.log10(24000), padding=0)
         self._pw.setYRange(-120, 5, padding=0)
         self._pw.showGrid(x=True, y=True, alpha=0.3)
         self._pw.getAxis("left").setStyle(tickFont=_mono_font())
         self._pw.getAxis("bottom").setStyle(tickFont=_mono_font())
-        self._pw.getAxis("bottom").setTicks([
-            [(np.log10(f), str(f)) for f in
-             [20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000]]
-        ])
         layout.addWidget(self._pw, stretch=1)
 
         # Spectrum fill curve

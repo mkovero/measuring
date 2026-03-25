@@ -302,19 +302,25 @@ def plot_transfer(result, device_name="DUT", output_path=None, show=False):
         ax.xaxis.set_minor_formatter(plt.FuncFormatter(_hz_fmt))
         ax.set_xticks([t for t in _FREQ_TICKS if x_lo <= t <= x_hi])
 
-    # Magnitude
+    # Magnitude — center around 0 dB
     ax_mag.plot(freqs, mag, color=_BLUE, linewidth=1.2)
     ax_mag.axhline(0, color="#444444", linewidth=1.0, linestyle="--")
     ax_mag.set_ylabel("Magnitude (dB)")
     ax_mag.set_title("Magnitude Response")
     ax_mag.yaxis.set_major_formatter(
         plt.FuncFormatter(lambda y, _: f"{y:+.1f}"))
+    # Symmetric Y-range around 0 dB
+    mag_max = max(abs(np.nanmin(mag)), abs(np.nanmax(mag)), 1.0)
+    mag_pad = min(mag_max * 1.1, mag_max + 3)
+    ax_mag.set_ylim(-mag_pad, mag_pad)
 
-    # Phase
+    # Phase — ±180°
     ax_ph.plot(freqs, phase, color=_PURPLE, linewidth=1.2)
     ax_ph.axhline(0, color="#444444", linewidth=1.0, linestyle="--")
     ax_ph.set_ylabel("Phase (\u00b0)")
     ax_ph.set_title("Phase Response")
+    ax_ph.set_ylim(-200, 200)
+    ax_ph.set_yticks([-180, -90, 0, 90, 180])
     ax_ph.yaxis.set_major_formatter(
         plt.FuncFormatter(lambda y, _: f"{y:+.0f}\u00b0"))
 

@@ -75,7 +75,7 @@ def h1_estimate(ref, meas, sr, nperseg=None, noverlap=None, window='hann'):
     magnitude = np.clip(magnitude, 1e-6, None)  # floor at -120 dB
     magnitude_db = 20.0 * np.log10(magnitude)
 
-    phase_deg = np.degrees(np.unwrap(np.angle(H1)))
+    phase_deg = np.degrees(np.angle(H1))  # wrapped to ±180°
 
     return {
         "freqs":         freqs,
