@@ -9,10 +9,6 @@ description = "CLI toolkit for audio bench measurements — THD, THD+N, sweeps, 
 readme = "README.md"
 license = {text = "MIT"}
 requires-python = ">=3.9"
-
-[project.urls]
-Homepage = "https://github.com/mkovero/ac"
-Source = "https://github.com/mkovero/ac"
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Environment :: Console",
@@ -29,6 +25,10 @@ dependencies = [
     "pyzmq",
     "pyserial",
 ]
+
+[project.urls]
+Homepage = "https://github.com/mkovero/ac"
+Source = "https://github.com/mkovero/ac"
 
 [project.optional-dependencies]
 dev = ["pytest"]
