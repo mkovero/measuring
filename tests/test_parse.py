@@ -313,3 +313,55 @@ def test_setup_reference_abbreviation():
     r = parse(["se", "ref", "3"])
     assert r["cmd"] == "setup"
     assert r["reference"] == 3
+
+
+# ---------------------------------------------------------------------------
+# plot level
+# ---------------------------------------------------------------------------
+
+def test_plot_level_defaults():
+    r = parse(["plot", "level"])
+    assert r["cmd"]   == "plot_level"
+    assert r["start"] == ("dbfs", -40.0)
+    assert r["stop"]  == ("dbfs",   0.0)
+    assert r["freq"]  == 1000.0
+    assert r["steps"] == 26
+    assert r["show_plot"] is False
+
+
+def test_plot_level_dbu():
+    r = parse(["plot", "level", "-20dbu", "6dbu", "1khz"])
+    assert r["cmd"]   == "plot_level"
+    assert r["start"] == ("dbu", -20.0)
+    assert r["stop"]  == ("dbu",   6.0)
+    assert r["freq"]  == 1000.0
+    assert r["steps"] == 26
+
+
+def test_plot_level_with_steps():
+    r = parse(["plot", "level", "-40dbfs", "0dbfs", "1khz", "10steps"])
+    assert r["cmd"]   == "plot_level"
+    assert r["start"] == ("dbfs", -40.0)
+    assert r["stop"]  == ("dbfs",   0.0)
+    assert r["freq"]  == 1000.0
+    assert r["steps"] == 10
+
+
+def test_plot_level_show():
+    r = parse(["plot", "level", "show"])
+    assert r["cmd"]       == "plot_level"
+    assert r["show_plot"] is True
+
+
+def test_plot_level_abbreviations():
+    r = parse(["p", "l", "-20dbu", "6dbu"])
+    assert r["cmd"]   == "plot_level"
+    assert r["start"] == ("dbu", -20.0)
+    assert r["stop"]  == ("dbu",   6.0)
+
+
+def test_plot_level_bare_numbers_default_dbfs():
+    r = parse(["plot", "level", "-40", "0"])
+    assert r["cmd"]   == "plot_level"
+    assert r["start"] == ("dbfs", -40.0)
+    assert r["stop"]  == ("dbfs",   0.0)

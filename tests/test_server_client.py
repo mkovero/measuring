@@ -5,6 +5,7 @@ Each test that starts a worker must drain to a done/error frame before returning
 so the server is idle for the next test.
 """
 import time
+import numpy as np
 import pytest
 
 
@@ -343,6 +344,157 @@ def test_server_enable_remote_client_can_connect(server_client):
         remote_client.close()
         server_client.send_cmd({"cmd": "server_disable"}, timeout_ms=3000)
         time.sleep(0.1)
+
+
+# ---------------------------------------------------------------------------
+# Plot level
+# ---------------------------------------------------------------------------
+
+def test_plot_level_fields(server_client):
+    """plot_level emits sweep_point frames with level-sweep fields."""
+    client = server_client
+    ack = client.send_cmd({
+        "cmd":        "plot_level",
+        "freq_hz":    1000.0,
+        "start_dbfs": -20.0,
+        "stop_dbfs":  -16.0,
+        "steps":       3,
+    })
+    assert ack["ok"] is True
+    assert "out_port" in ack and ack["out_port"]
+    assert "in_port"  in ack and ack["in_port"]
+
+    frames = recv_until(client, done_topics=("done", "error"), timeout_ms=30000)
+    data_frames = [f for t, f in frames if t == "data"]
+    assert data_frames, "expected at least one sweep_point from plot_level"
+
+    for f in data_frames:
+        assert f.get("type") == "sweep_point"
+        assert f.get("cmd")  == "plot_level"
+        assert "thd_pct"    in f
+        assert "thdn_pct"   in f
+        assert "drive_db"   in f
+        assert "spectrum"   in f
+        assert "freqs"      in f
+        assert "freq_hz"    in f
+
+    # Done frame should have the right cmd
+    done_frames = [f for t, f in frames if t == "done"]
+    assert done_frames
+    assert done_frames[0]["cmd"] == "plot_level"
+
+
+def test_plot_level_step_count(server_client):
+    """plot_level should produce exactly the requested number of points."""
+    client = server_client
+    ack = client.send_cmd({
+        "cmd":        "plot_level",
+        "freq_hz":    1000.0,
+        "start_dbfs": -20.0,
+        "stop_dbfs":  -18.0,
+        "steps":       3,
+    })
+    assert ack["ok"] is True
+
+    frames = recv_until(client, done_topics=("done", "error"), timeout_ms=30000)
+    data_frames = [f for t, f in frames if t == "data"]
+    assert len(data_frames) == 3
+
+    done_frames = [f for t, f in frames if t == "done"]
+    assert done_frames[0]["n_points"] == 3
+
+
+# ---------------------------------------------------------------------------
+# Sweep point frame: None fields should not break numpy float conversion
+# ---------------------------------------------------------------------------
+
+def test_sweep_point_none_fields_are_numeric_safe(server_client):
+    """Without calibration, gain_db/out_dbu/in_dbu are None in sweep_point frames.
+    UI code must handle these safely with np.nan, not None in float arrays."""
+    import numpy as np
+    client = server_client
+    ack = client.send_cmd({
+        "cmd":        "plot",
+        "start_hz":   1000.0,
+        "stop_hz":    2000.0,
+        "level_dbfs": -20.0,
+        "ppd":         1,
+    })
+    assert ack["ok"] is True
+
+    frames = recv_until(client, done_topics=("done", "error"), timeout_ms=30000)
+    data_frames = [f for t, f in frames if t == "data"]
+    assert data_frames
+
+    # The test server has no calibration, so these fields should be None
+    for f in data_frames:
+        assert f["gain_db"] is None, "expected None gain_db without calibration"
+        assert f["out_dbu"] is None, "expected None out_dbu without calibration"
+        assert f["in_dbu"]  is None, "expected None in_dbu without calibration"
+
+    # Verify the pattern used in sweep.py handles None → NaN correctly
+    pts = data_frames
+    gain = np.array([p["gain_db"] if p.get("gain_db") is not None
+                     else np.nan for p in pts], dtype=float)
+    assert gain.dtype == np.float64
+    assert np.all(np.isnan(gain))
+
+    # Verify the WRONG pattern would produce an object array (the bug we fixed)
+    gain_broken = np.array([p.get("gain_db", np.nan) for p in pts])
+    # p.get("gain_db", np.nan) returns None because the key exists with value None
+    assert gain_broken.dtype == object, \
+        "get() with default should return None when key exists — confirming the bug pattern"
+
+
+def test_plot_thd_numerical_accuracy(server_client):
+    """FakeJackEngine generates 1% 2nd harmonic — verify the server reports ≈1% THD."""
+    client = server_client
+    ack = client.send_cmd({
+        "cmd":        "plot",
+        "start_hz":   1000.0,
+        "stop_hz":    1000.0,
+        "level_dbfs": -20.0,
+        "ppd":         1,
+    })
+    assert ack["ok"] is True
+
+    frames = recv_until(client, done_topics=("done", "error"), timeout_ms=30000)
+    data_frames = [f for t, f in frames if t == "data"]
+    assert data_frames, "expected at least one sweep_point"
+
+    f = data_frames[0]
+    # FakeJackEngine: amp=0.1, 2nd harmonic = 0.01*0.1 = 0.001 → THD = 1.0%
+    assert 0.8 < f["thd_pct"] < 1.3, \
+        f"THD should be ≈1.0% from FakeJackEngine, got {f['thd_pct']:.4f}%"
+    # THD+N should be close to THD (no real noise in synthetic signal)
+    assert f["thdn_pct"] >= f["thd_pct"], \
+        f"THD+N ({f['thdn_pct']:.4f}%) < THD ({f['thd_pct']:.4f}%) — impossible"
+    # fundamental_dbfs should be ≈ -20 dBFS (amplitude 0.1)
+    assert -22 < f["fundamental_dbfs"] < -18, \
+        f"fundamental_dbfs should be ≈-20, got {f['fundamental_dbfs']:.2f}"
+
+
+def test_plot_level_thd_numerical_accuracy(server_client):
+    """plot_level at fixed 1kHz should also produce ≈1% THD from FakeJackEngine."""
+    client = server_client
+    ack = client.send_cmd({
+        "cmd":        "plot_level",
+        "freq_hz":    1000.0,
+        "start_dbfs": -20.0,
+        "stop_dbfs":  -20.0,
+        "steps":       1,
+    })
+    assert ack["ok"] is True
+
+    frames = recv_until(client, done_topics=("done", "error"), timeout_ms=30000)
+    data_frames = [f for t, f in frames if t == "data"]
+    assert data_frames
+
+    f = data_frames[0]
+    assert 0.8 < f["thd_pct"] < 1.3, \
+        f"THD should be ≈1.0%, got {f['thd_pct']:.4f}%"
+    assert f["freq_hz"] == pytest.approx(1000.0)
+    assert f["drive_db"] == pytest.approx(-20.0)
 
 
 def test_monitor_spectrum_frames(server_client):
