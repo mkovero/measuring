@@ -2,64 +2,13 @@
 import json
 import numpy as np
 
-from pyqtgraph.Qt import QtCore, QtGui, QtWidgets
+from pyqtgraph.Qt import QtCore, QtWidgets
 import pyqtgraph as pg
 
 from .app import (PANEL, BLUE, ORANGE, PURPLE, RED,
                   FreqAxis, mono_font, styled_plot, status_label, readout_label)
 
-
-class _PulseOverlay(QtWidgets.QWidget):
-    """Semi-transparent pulsing ring overlay drawn on top of everything."""
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setAttribute(QtCore.Qt.WidgetAttribute.WA_TransparentForMouseEvents)
-        self.setAttribute(QtCore.Qt.WidgetAttribute.WA_TranslucentBackground)
-        self.setStyleSheet("background: transparent;")
-        self._phase = 0.0
-        self._timer = QtCore.QTimer(self)
-        self._timer.timeout.connect(self._tick)
-
-    def start(self):
-        self._phase = 0.0
-        self.show()
-        self.raise_()
-        self._timer.start(40)
-
-    def stop(self):
-        self._timer.stop()
-        self.hide()
-
-    def _tick(self):
-        self._phase += 0.04
-        self.update()
-
-    def paintEvent(self, event):
-        if not self.isVisible():
-            return
-        p = QtGui.QPainter(self)
-        p.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
-
-        cx = self.width() / 2
-        cy = self.height() / 2
-        base_r = min(cx, cy) * 0.85
-
-        t = np.sin(self._phase)
-        radius = base_r + base_r * 0.15 * t
-        alpha = int(60 + 40 * t)
-
-        p.setPen(QtCore.Qt.PenStyle.NoPen)
-        p.setBrush(QtGui.QColor(255, 180, 60, int(alpha * 0.15)))
-        p.drawEllipse(QtCore.QPointF(cx, cy), radius, radius)
-
-        # Inner dot
-        dot_alpha = int(90 + 60 * t)
-        p.setPen(QtCore.Qt.PenStyle.NoPen)
-        p.setBrush(QtGui.QColor(255, 180, 60, dot_alpha))
-        p.drawEllipse(QtCore.QPointF(cx, cy), 6, 6)
-
-        p.end()
+_SPINNER = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 
 
 class TransferView(QtWidgets.QMainWindow):
@@ -152,29 +101,29 @@ class TransferView(QtWidgets.QMainWindow):
         self._p_mag.addItem(self._hline)
         self._p_mag.scene().sigMouseMoved.connect(self._on_mouse_moved)
 
-        # Capture pulse overlay — covers entire window
-        self._pulse = _PulseOverlay(central)
-        self._pulse.hide()
-
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        if hasattr(self, "_pulse"):
-            cw = self.centralWidget()
-            if cw:
-                self._pulse.setGeometry(cw.rect())
+        # Spinner timer
+        self._spin_idx = 0
+        self._spin_timer = QtCore.QTimer()
+        self._spin_timer.timeout.connect(self._tick_spinner)
 
     # ------------------------------------------------------------------
     # Capture indicator
     # ------------------------------------------------------------------
 
+    def _tick_spinner(self):
+        self._spin_idx = (self._spin_idx + 1) % len(_SPINNER)
+        s = _SPINNER[self._spin_idx]
+        self._status.setText(f"  {s} Capturing…")
+
     def _start_capturing(self):
         self._capturing = True
-        self._pulse.start()
-        self._status.setText("  Capturing…")
+        self._spin_idx = 0
+        self._spin_timer.start(100)
+        self._status.setText(f"  {_SPINNER[0]} Capturing…")
 
     def _stop_capturing(self):
         self._capturing = False
-        self._pulse.stop()
+        self._spin_timer.stop()
 
     # ------------------------------------------------------------------
     # Re-capture via ZMQ REQ

@@ -25,6 +25,9 @@ def _pct_fmt(val):
     return f"{val:.4f}%"
 
 
+_SPINNER = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+
+
 class SweepView(QtWidgets.QMainWindow):
     def __init__(self, mode="sweep_frequency", session_dir=None):
         super().__init__()
@@ -34,10 +37,17 @@ class SweepView(QtWidgets.QMainWindow):
         self._done    = False
         self._selected_idx = None
         self._session_dir = session_dir
+        self._spin_idx = 0
 
         title = "Frequency Sweep" if self._is_freq else "Level Sweep"
         self.setWindowTitle(title)
         self._build_ui()
+
+        # Spinner timer for in-progress indication
+        self._spin_timer = QtCore.QTimer()
+        self._spin_timer.timeout.connect(self._tick_spinner)
+        self._spin_timer.start(100)
+
         self.showFullScreen()
 
     # ------------------------------------------------------------------
@@ -128,19 +138,30 @@ class SweepView(QtWidgets.QMainWindow):
     # Frame handler
     # ------------------------------------------------------------------
 
+    def _tick_spinner(self):
+        if self._done:
+            return
+        self._spin_idx = (self._spin_idx + 1) % len(_SPINNER)
+        n = len(self._points)
+        s = _SPINNER[self._spin_idx]
+        if n:
+            self._status.setText(f"  {s} Measuring… {n} point(s)")
+        else:
+            self._status.setText(f"  {s} Waiting for data…")
+
     def on_frame(self, topic, frame):
         if topic == "error":
             self._status.setText(f"  Error: {frame.get('message','?')}")
+            self._spin_timer.stop()
             return
 
         if topic == "data" and frame.get("type") == "sweep_point":
             self._points.append(frame)
             self._refresh_plots()
-            n = len(self._points)
-            self._status.setText(f"  Sweep running… {n} point(s) collected")
 
         elif topic == "done":
             self._done = True
+            self._spin_timer.stop()
             n = len(self._points)
             xr = frame.get("xruns", 0)
             xr_s = f"  !! {xr} xrun(s)" if xr else ""
