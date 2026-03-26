@@ -172,7 +172,15 @@ class SweepView(QtWidgets.QMainWindow):
             self._clip_thdn.setData([], [])
 
         if not self._done:
-            self._p_gain.enableAutoRange(enable=True)
+            # Gain: auto-range with minimum ±0.5 dB span
+            valid_gain = gain[valid]
+            valid_gain = valid_gain[~np.isnan(valid_gain)]
+            if len(valid_gain) > 0:
+                g_min, g_max = np.min(valid_gain), np.max(valid_gain)
+                g_mid = (g_min + g_max) / 2
+                g_half = max((g_max - g_min) / 2 * 1.2, 0.5)
+                self._p_gain.setYRange(g_mid - g_half, g_mid + g_half)
+
             # Fit THD/THD+N Y-axis tightly to data (avoid defaulting to 0–1)
             all_vals = np.concatenate([thd[valid], thdn[valid]])
             if len(all_vals) > 0:
