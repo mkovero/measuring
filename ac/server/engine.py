@@ -223,6 +223,7 @@ def _worker_monitor_spectrum(pub_q, stop_ev, cfg, cmd):
     engine = JackEngine()
     try:
         engine.start(input_port=in_port)
+        engine.capture_block(duration)          # discard warmup capture
         while not stop_ev.is_set():
             data = engine.capture_block(duration)
             rec  = data.reshape(-1, 1)
@@ -247,6 +248,7 @@ def _worker_monitor_spectrum(pub_q, stop_ev, cfg, cmd):
                 "sr":       engine.samplerate,
                 "freqs":    freqs_ds.tolist(),
                 "spectrum": spec_ds.tolist(),
+                "fundamental_dbfs": float(r["fundamental_dbfs"]),
                 "thd_pct":  float(r["thd_pct"]),
                 "thdn_pct": float(r["thdn_pct"]),
                 "in_dbu":   in_dbu,

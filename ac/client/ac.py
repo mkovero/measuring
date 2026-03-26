@@ -162,20 +162,22 @@ def _numpy_results(results):
     return results
 
 
-def _launch_ui(mode, host="localhost", data_port=DATA_PORT):
-    """Spawn the pyqtgraph UI as a separate process. Returns True on success."""
+def _launch_ui(mode, host="localhost", data_port=DATA_PORT, session_dir=None):
+    """Spawn the pyqtgraph UI as a separate process. Returns Popen or None."""
     try:
         import pyqtgraph  # noqa: F401 — check availability only
     except ImportError:
-        return False
+        return None
     import subprocess
-    subprocess.Popen(
-        [sys.executable, "-m", "ac.ui",
-         "--mode", mode, "--host", host, "--port", str(data_port)],
+    cmd = [sys.executable, "-m", "ac.ui",
+           "--mode", mode, "--host", host, "--port", str(data_port)]
+    if session_dir:
+        cmd += ["--session-dir", session_dir]
+    return subprocess.Popen(
+        cmd,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
-    return True
 
 
 def _save_results(results, label, cal=None, cfg=None, show_plot=False,
@@ -511,6 +513,7 @@ def cmd_calibrate(cmd, cfg, client):
 
     ack = _check_ack(client.send_cmd(c, timeout_ms=5000))
     print(f"  Calibration started: 1 kHz  |  {ref_dbfs:.1f} dBFS")
+    print(f"  Press Ctrl+C or type q to cancel.\n")
 
     try:
         while True:
@@ -520,18 +523,25 @@ def cmd_calibrate(cmd, cfg, client):
                 dmm_vrms = frame.get("dmm_vrms")
                 if dmm_vrms is not None:
                     hint = f"{dmm_vrms * 1000:.4f} mVrms"
-                    raw  = input(f"  Enter to accept ({hint}), or override: ").strip()
-                    vrms = _parse_vrms(raw) if raw else dmm_vrms
+                    raw  = input(f"  Enter to accept ({hint}), or override (q to cancel): ").strip()
                 else:
                     while True:
-                        raw = input("  DMM reading (e.g. 245mV or 0.245, Enter to skip): ").strip()
+                        raw = input("  DMM reading (e.g. 245mV or 0.245, Enter to skip, q to cancel): ").strip()
                         if not raw:
                             vrms = None
+                            break
+                        if raw.lower() == "q":
                             break
                         vrms = _parse_vrms(raw)
                         if vrms is not None:
                             break
                         print("  Try:  0.245  or  245mV")
+                if raw.lower() == "q":
+                    print("  Calibration cancelled.")
+                    client.send_cmd({"cmd": "stop"})
+                    break
+                if dmm_vrms is not None:
+                    vrms = _parse_vrms(raw) if raw else dmm_vrms
                 client.send_cmd({"cmd": "cal_reply", "vrms": vrms})
             elif topic == "cal_done":
                 print(f"\n  Calibration saved: [{frame.get('key')}]")
@@ -808,7 +818,7 @@ def cmd_transfer(cmd, cfg, client):
 
     save_transfer_csv(result, csv_path)
     plot_transfer(result, device_name="DUT", output_path=plot_path,
-                  show=cmd.get("show_plot", False))
+                  show=False)
 
 
 def cmd_monitor(cmd, cfg, client):
@@ -830,7 +840,10 @@ def cmd_monitor(cmd, cfg, client):
     data_port = cfg.get("zmq_data_port", DATA_PORT)
 
     if cmd.get("show_plot"):
-        _launch_ui("spectrum", host=host, data_port=data_port)
+        active = cfg.get("session")
+        sess_dir = session_dir(active) if active else None
+        ui_proc = _launch_ui("spectrum", host=host, data_port=data_port,
+                              session_dir=sess_dir)
 
     ack = _check_ack(client.send_cmd({
         "cmd":      "monitor_spectrum",
@@ -841,15 +854,18 @@ def cmd_monitor(cmd, cfg, client):
     print(f"  {start_freq:.0f}–{end_freq:.0f} Hz  |  Ctrl+C or q to stop")
 
     if cmd.get("show_plot"):
-        # pyqtgraph UI is the display; terminal just waits quietly.
-        print("  Window open — press q/ESC in the window or Ctrl+C here to stop.")
+        # pyqtgraph UI is the display; CLI exits when the window closes.
+        print("  Window open — close the window or press Ctrl+C to stop.")
         q_stop, q_restore = _make_q_listener()
         try:
             while True:
                 if q_stop.is_set():
                     break
+                # Check if the UI window was closed
+                if ui_proc and ui_proc.poll() is not None:
+                    break
                 try:
-                    topic, frame = client.recv_data(timeout_ms=2000)
+                    topic, frame = client.recv_data(timeout_ms=500)
                 except TimeoutError:
                     continue
                 if topic == "error" and frame.get("cmd") in (None, "monitor_spectrum"):

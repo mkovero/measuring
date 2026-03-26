@@ -205,6 +205,7 @@ def main():
                     choices=["spectrum", "thd", "sweep_frequency", "sweep_level", "transfer"])
     ap.add_argument("--host",  default="localhost")
     ap.add_argument("--port",  type=int, default=5557)
+    ap.add_argument("--session-dir", default=None)
     args = ap.parse_args()
 
     try:
@@ -224,7 +225,7 @@ def main():
     # Build view
     if args.mode == "spectrum":
         from .spectrum import SpectrumView
-        view = SpectrumView()
+        view = SpectrumView(session_dir=args.session_dir)
     elif args.mode == "transfer":
         from .transfer import TransferView
         view = TransferView()

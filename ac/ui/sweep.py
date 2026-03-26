@@ -95,6 +95,10 @@ class SweepView(QtWidgets.QMainWindow):
         self._spec_curve = self._p_spec.plot(pen=pg.mkPen(BLUE, width=1))
         self._spec_harmonic_lines = []
 
+        # Link X-axis zoom/pan across all panels
+        self._p_gain.setXLink(self._p_thd)
+        self._p_spec.setXLink(self._p_thd)
+
         # Click handler on THD plot for point selection
         self._p_thd.scene().sigMouseClicked.connect(self._on_click)
 

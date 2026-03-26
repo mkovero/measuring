@@ -16,15 +16,18 @@ _PEAK_DECAY  = 1.5
 
 
 class SpectrumView(QtWidgets.QMainWindow):
-    def __init__(self):
+    def __init__(self, session_dir=None):
         super().__init__()
         self.setWindowTitle("Spectrum Monitor")
+        self._session_dir = session_dir
 
         # Smoothing state
         self._smooth_db  = None
         self._peak_db    = None
         self._peak_age   = None
         self._last_freqs = None
+        self._last_log_f = None
+        self._last_smooth = None
 
         # Latest metadata
         self._fundamental_hz = None
@@ -100,13 +103,14 @@ class SpectrumView(QtWidgets.QMainWindow):
         if topic != "data" or frame.get("type") != "spectrum":
             return
 
-        freqs   = np.array(frame["freqs"],    dtype=float)
+        freqs    = np.array(frame["freqs"],    dtype=float)
         spec_lin = np.array(frame["spectrum"], dtype=float)
-        sr      = frame.get("sr", 48000)
-        f0      = frame.get("fundamental_hz")
-        thd     = frame.get("thd_pct")
-        thdn    = frame.get("thdn_pct")
-        in_dbu  = frame.get("in_dbu")
+        sr       = frame.get("sr", 48000)
+        f0       = frame.get("fundamental_hz")
+        thd      = frame.get("thd_pct")
+        thdn     = frame.get("thdn_pct")
+        in_dbu   = frame.get("in_dbu")
+        fund_dbfs = frame.get("fundamental_dbfs")
 
         # Clip to Nyquist / 24 kHz
         f_hi = min(sr / 2, 24000)
@@ -122,6 +126,9 @@ class SpectrumView(QtWidgets.QMainWindow):
 
         log_f = np.log10(freqs)
 
+        self._last_log_f = log_f
+        self._last_smooth = smooth_db
+
         self._fill_curve.setData(log_f, smooth_db)
         self._peak_curve.setData(log_f, peak_db)
 
@@ -132,12 +139,18 @@ class SpectrumView(QtWidgets.QMainWindow):
                 self._pw.removeItem(line)
             self._harmonic_lines = add_harmonic_markers(self._pw, f0, sr)
 
-        # Status line
+        # Status line — show dBFS (matches Y-axis) and dBu if calibrated
         freq_s = f"{f0:.0f} Hz" if f0 else ""
-        dbu_s  = f"  │  {in_dbu:+.2f} dBu"   if in_dbu  is not None else ""
+        level_s = ""
+        if fund_dbfs is not None:
+            level_s = f"  │  {fund_dbfs:.1f} dBFS"
+            if in_dbu is not None:
+                level_s += f" ({in_dbu:+.2f} dBu)"
+        elif in_dbu is not None:
+            level_s = f"  │  {in_dbu:+.2f} dBu"
         thd_s  = f"  │  THD: {thd:.4f}%"      if thd     is not None else ""
         thdn_s = f"  │  THD+N: {thdn:.4f}%"   if thdn    is not None else ""
-        self._status.setText(f"  {freq_s}{dbu_s}{thd_s}{thdn_s}")
+        self._status.setText(f"  {freq_s}{level_s}{thd_s}{thdn_s}")
 
     # ------------------------------------------------------------------
     # Smoothing (fast attack / slow decay + peak hold — mirrors tui.py)
@@ -187,10 +200,45 @@ class SpectrumView(QtWidgets.QMainWindow):
     # Keyboard shortcuts
     # ------------------------------------------------------------------
 
+    # ------------------------------------------------------------------
+    # Save snapshot (S key)
+    # ------------------------------------------------------------------
+
+    def _save_snapshot(self):
+        import os
+        from datetime import datetime
+        out_dir = self._session_dir or "."
+        os.makedirs(out_dir, exist_ok=True)
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+        # Save PNG
+        from pyqtgraph.exporters import ImageExporter
+        exporter = ImageExporter(self._pw.plotItem)
+        png_path = os.path.join(out_dir, f"spectrum_{ts}.png")
+        exporter.export(png_path)
+
+        # Save CSV
+        if self._last_log_f is not None and self._last_smooth is not None:
+            csv_path = os.path.join(out_dir, f"spectrum_{ts}.csv")
+            freqs_hz = 10 ** self._last_log_f
+            with open(csv_path, "w") as f:
+                f.write("freq_hz,level_dbfs\n")
+                for hz, db in zip(freqs_hz, self._last_smooth):
+                    f.write(f"{hz:.2f},{db:.2f}\n")
+            self._readout.setText(f"  Saved: {png_path}  +  {csv_path}")
+        else:
+            self._readout.setText(f"  Saved: {png_path}")
+
+    # ------------------------------------------------------------------
+    # Keyboard shortcuts
+    # ------------------------------------------------------------------
+
     def keyPressEvent(self, event):
         key = event.key()
         if key in (QtCore.Qt.Key.Key_Q, QtCore.Qt.Key.Key_Escape):
             self.close()
+        elif key == QtCore.Qt.Key.Key_S:
+            self._save_snapshot()
         elif key == QtCore.Qt.Key.Key_F11:
             if self.isFullScreen():
                 self.showNormal()

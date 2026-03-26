@@ -68,6 +68,16 @@ class TransferView(QtWidgets.QMainWindow):
         self._p_coh.addItem(self._coh_ref)
         self._p_coh.setYRange(-0.05, 1.05)
 
+        # Set initial ranges so empty panels look intentional
+        self._p_mag.setXRange(np.log10(20), np.log10(20000), padding=0)
+        self._p_mag.setYRange(-5, 5)
+        self._p_phase.setXRange(np.log10(20), np.log10(20000), padding=0)
+        self._p_coh.setXRange(np.log10(20), np.log10(20000), padding=0)
+
+        # Link X-axis zoom/pan across all panels
+        self._p_phase.setXLink(self._p_mag)
+        self._p_coh.setXLink(self._p_mag)
+
         self._readout = readout_label()
         layout.addWidget(self._readout)
 
