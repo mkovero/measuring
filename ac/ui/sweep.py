@@ -155,14 +155,12 @@ class SweepView(QtWidgets.QMainWindow):
         gain = np.array([p.get("gain_db", np.nan) for p in pts])
         clip = np.array([bool(p.get("clipping")) for p in pts])
 
-        valid = np.array([not p.get("clipping") and not p.get("ac_coupled")
-                          for p in pts])
-        if not valid.any():
-            valid = np.ones(len(pts), dtype=bool)
+        not_clip = np.array([not p.get("clipping") for p in pts])
+        show = not_clip if not_clip.any() else np.ones(len(pts), dtype=bool)
 
-        self._thd_line.setData(xs[valid], thd[valid])
-        self._thdn_line.setData(xs[valid], thdn[valid])
-        self._gain_line.setData(xs[valid], gain[valid])
+        self._thd_line.setData(xs[show], thd[show])
+        self._thdn_line.setData(xs[show], thdn[show])
+        self._gain_line.setData(xs[show], gain[show])
 
         if clip.any():
             self._clip_thd.setData(xs[clip], thd[clip])
@@ -173,7 +171,7 @@ class SweepView(QtWidgets.QMainWindow):
 
         if not self._done:
             # Gain: auto-range with minimum ±0.5 dB span
-            valid_gain = gain[valid]
+            valid_gain = gain[show]
             valid_gain = valid_gain[~np.isnan(valid_gain)]
             if len(valid_gain) > 0:
                 g_min, g_max = np.min(valid_gain), np.max(valid_gain)
@@ -182,7 +180,7 @@ class SweepView(QtWidgets.QMainWindow):
                 self._p_gain.setYRange(g_mid - g_half, g_mid + g_half)
 
             # Fit THD/THD+N Y-axis tightly to data (avoid defaulting to 0–1)
-            all_vals = np.concatenate([thd[valid], thdn[valid]])
+            all_vals = np.concatenate([thd[show], thdn[show]])
             if len(all_vals) > 0:
                 ymin = max(0, np.min(all_vals) * 0.8)
                 ymax = np.max(all_vals) * 1.2
