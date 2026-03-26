@@ -228,10 +228,11 @@ def main():
     elif args.mode == "transfer":
         from .transfer import TransferView
         view = TransferView(host=args.host, ctrl_port=args.ctrl_port,
-                            level_dbfs=args.level_dbfs)
+                            level_dbfs=args.level_dbfs,
+                            session_dir=args.session_dir)
     else:
         from .sweep import SweepView
-        view = SweepView(mode=args.mode)
+        view = SweepView(mode=args.mode, session_dir=args.session_dir)
 
     receiver.frame_received.connect(view.on_frame)
     receiver.start()

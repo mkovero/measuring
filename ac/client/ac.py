@@ -698,7 +698,10 @@ def cmd_plot(cmd, cfg, client):
 
     if cmd.get("show_plot"):
         host = cfg.get("server_host", "localhost")
-        _launch_ui("sweep_frequency", host=host, data_port=cfg.get("zmq_data_port", DATA_PORT))
+        active = cfg.get("session")
+        sess_dir = session_dir(active) if active else None
+        _launch_ui("sweep_frequency", host=host, data_port=cfg.get("zmq_data_port", DATA_PORT),
+                   session_dir=sess_dir)
 
     ack = _check_ack(client.send_cmd({
         "cmd":        "plot",
@@ -743,7 +746,10 @@ def cmd_plot_level(cmd, cfg, client):
 
     if cmd.get("show_plot"):
         host = cfg.get("server_host", "localhost")
-        _launch_ui("sweep_level", host=host, data_port=cfg.get("zmq_data_port", DATA_PORT))
+        active = cfg.get("session")
+        sess_dir = session_dir(active) if active else None
+        _launch_ui("sweep_level", host=host, data_port=cfg.get("zmq_data_port", DATA_PORT),
+                   session_dir=sess_dir)
 
     ack = _check_ack(client.send_cmd({
         "cmd":        "plot_level",
@@ -785,9 +791,11 @@ def cmd_transfer(cmd, cfg, client):
 
     if cmd.get("show_plot"):
         host = cfg.get("server_host", "localhost")
+        active = cfg.get("session")
+        sess_dir = session_dir(active) if active else None
         _launch_ui("transfer", host=host, data_port=cfg.get("zmq_data_port", DATA_PORT),
                    ctrl_port=cfg.get("zmq_ctrl_port", CTRL_PORT),
-                   level_dbfs=level_db)
+                   level_dbfs=level_db, session_dir=sess_dir)
 
     ack = _check_ack(client.send_cmd({
         "cmd":        "transfer",

@@ -63,12 +63,14 @@ class _PulseOverlay(QtWidgets.QWidget):
 
 
 class TransferView(QtWidgets.QMainWindow):
-    def __init__(self, host="localhost", ctrl_port=5556, level_dbfs=-10.0):
+    def __init__(self, host="localhost", ctrl_port=5556, level_dbfs=-10.0,
+                 session_dir=None):
         super().__init__()
         self.setWindowTitle("Transfer Function")
         self._host = host
         self._ctrl_port = ctrl_port
         self._level_dbfs = level_dbfs
+        self._session_dir = session_dir
         self._result = None
         self._capturing = False
         self._capture_n = 0
@@ -86,12 +88,12 @@ class TransferView(QtWidgets.QMainWindow):
         self._status = status_label()
         layout.addWidget(self._status)
 
-        glw = pg.GraphicsLayoutWidget()
-        glw.setBackground(PANEL)
-        layout.addWidget(glw, stretch=1)
+        self._glw = pg.GraphicsLayoutWidget()
+        self._glw.setBackground(PANEL)
+        layout.addWidget(self._glw, stretch=1)
 
         # Magnitude
-        self._p_mag = styled_plot(glw, "Magnitude Response", "Magnitude (dB)",
+        self._p_mag = styled_plot(self._glw, "Magnitude Response", "Magnitude (dB)",
                                   log_freq=True)
         self._mag_line = self._p_mag.plot(pen=pg.mkPen(BLUE, width=1.5))
         self._mag_ref = pg.InfiniteLine(
@@ -99,10 +101,10 @@ class TransferView(QtWidgets.QMainWindow):
             pen=pg.mkPen("#444444", width=1, style=QtCore.Qt.PenStyle.DashLine))
         self._p_mag.addItem(self._mag_ref)
 
-        glw.nextRow()
+        self._glw.nextRow()
 
         # Phase
-        self._p_phase = styled_plot(glw, "Phase Response", "Phase (\u00b0)",
+        self._p_phase = styled_plot(self._glw, "Phase Response", "Phase (\u00b0)",
                                     log_freq=True)
         self._phase_line = self._p_phase.plot(pen=pg.mkPen(PURPLE, width=1.5))
         self._phase_ref = pg.InfiniteLine(
@@ -115,10 +117,10 @@ class TransferView(QtWidgets.QMainWindow):
              (90, "90\u00b0"), (180, "180\u00b0")]
         ])
 
-        glw.nextRow()
+        self._glw.nextRow()
 
         # Coherence
-        self._p_coh = styled_plot(glw, "Coherence", "Coherence (\u03b3\u00b2)",
+        self._p_coh = styled_plot(self._glw, "Coherence", "Coherence (\u03b3\u00b2)",
                                   log_freq=True)
         self._coh_line = self._p_coh.plot(pen=pg.mkPen(ORANGE, width=1.5))
         self._coh_ref = pg.InfiniteLine(
@@ -283,12 +285,47 @@ class TransferView(QtWidgets.QMainWindow):
         self._readout.setText(
             f"  \u25b6 {_hz_label(hz)} Hz   {db:+.2f} dB")
 
+    # ------------------------------------------------------------------
+    # Save snapshot (S key)
+    # ------------------------------------------------------------------
+
+    def _save_snapshot(self):
+        if self._result is None:
+            self._readout.setText("  Nothing to save yet")
+            return
+        import os
+        from datetime import datetime
+        out_dir = self._session_dir or "."
+        os.makedirs(out_dir, exist_ok=True)
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+        # Save PNG
+        from pyqtgraph.exporters import ImageExporter
+        exporter = ImageExporter(self._glw.scene())
+        png_path = os.path.join(out_dir, f"transfer_{ts}.png")
+        exporter.export(png_path)
+
+        # Save CSV
+        csv_path = os.path.join(out_dir, f"transfer_{ts}.csv")
+        freqs = np.array(self._result["freqs"], dtype=float)
+        mag   = np.array(self._result["magnitude_db"], dtype=float)
+        phase = np.array(self._result["phase_deg"], dtype=float)
+        coh   = np.array(self._result["coherence"], dtype=float)
+        with open(csv_path, "w") as f:
+            f.write("freq_hz,magnitude_db,phase_deg,coherence\n")
+            for hz, m, ph, c in zip(freqs, mag, phase, coh):
+                f.write(f"{hz:.2f},{m:.4f},{ph:.2f},{c:.4f}\n")
+
+        self._readout.setText(f"  Saved: {png_path}  +  {csv_path}")
+
     def keyPressEvent(self, event):
         key = event.key()
         if key in (QtCore.Qt.Key.Key_Q, QtCore.Qt.Key.Key_Escape):
             self.close()
         elif key in (QtCore.Qt.Key.Key_Return, QtCore.Qt.Key.Key_Enter):
             self._send_transfer_cmd()
+        elif key == QtCore.Qt.Key.Key_S:
+            self._save_snapshot()
         elif key == QtCore.Qt.Key.Key_F11:
             if self.isFullScreen():
                 self.showNormal()
