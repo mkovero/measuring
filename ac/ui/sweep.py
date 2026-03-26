@@ -4,7 +4,7 @@ import numpy as np
 from pyqtgraph.Qt import QtCore, QtWidgets
 import pyqtgraph as pg
 
-from .app import (BG, PANEL, TEXT, BLUE, ORANGE, PURPLE, RED, AMBER,
+from .app import (PANEL, TEXT, BLUE, ORANGE, PURPLE, RED,
                   FreqAxis, mono_font, styled_plot, add_harmonic_markers,
                   status_label, readout_label)
 

@@ -29,9 +29,9 @@ Entry point: `app.py:main()` (also called from `__main__.py`).
 ## Color palette (defined in `app.py`)
 
 ```python
-BG="#0e1117"  PANEL="#161b22"  GRID="#222222"  TEXT="#aaaaaa"
+BG="#0e1117"  PANEL="#161b22"  TEXT="#aaaaaa"
 BLUE="#4a9eff"  ORANGE="#e67e22"  PURPLE="#a29bfe"
-RED="#e74c3c"   AMBER="#ffb43c"   GREEN="#2ecc71"  YELLOW="#f1c40f"
+RED="#e74c3c"   AMBER="#ffb43c"
 ```
 
 ## ZmqReceiver thread

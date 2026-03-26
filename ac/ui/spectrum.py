@@ -4,7 +4,7 @@ import numpy as np
 from pyqtgraph.Qt import QtCore, QtWidgets
 import pyqtgraph as pg
 
-from .app import (BG, PANEL, TEXT, BLUE, AMBER,
+from .app import (PANEL, TEXT, BLUE,
                   FreqAxis, mono_font, add_harmonic_markers,
                   status_label, readout_label)
 
@@ -25,7 +25,6 @@ class SpectrumView(QtWidgets.QMainWindow):
         self._smooth_db  = None
         self._peak_db    = None
         self._peak_age   = None
-        self._last_freqs = None
         self._last_log_f = None
         self._last_smooth = None
         self._y_range_set = False

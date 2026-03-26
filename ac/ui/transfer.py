@@ -5,7 +5,7 @@ import numpy as np
 from pyqtgraph.Qt import QtCore, QtGui, QtWidgets
 import pyqtgraph as pg
 
-from .app import (BG, PANEL, TEXT, BLUE, ORANGE, PURPLE, RED, AMBER,
+from .app import (PANEL, BLUE, ORANGE, PURPLE, RED,
                   FreqAxis, mono_font, styled_plot, status_label, readout_label)
 
 
@@ -48,7 +48,6 @@ class _PulseOverlay(QtWidgets.QWidget):
         t = np.sin(self._phase)
         radius = base_r + base_r * 0.15 * t
         alpha = int(60 + 40 * t)
-        width = 3.0 + 1.5 * t
 
         p.setPen(QtCore.Qt.PenStyle.NoPen)
         p.setBrush(QtGui.QColor(255, 180, 60, int(alpha * 0.15)))

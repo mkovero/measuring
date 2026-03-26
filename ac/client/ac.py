@@ -593,23 +593,6 @@ def _print_freq_header(have_cal):
         print("  " + "  ".join([f"{'Freq':>8}", f"{'THD%':>9}", f"{'THD+N%':>9}"]))
 
 
-def _print_sweep_row(frame):
-    drive = frame["drive_db"]
-    thd   = frame["thd_pct"]
-    thdn  = frame["thdn_pct"]
-    clip  = "  [CLIP]" if frame.get("clipping") else ""
-    if frame.get("out_vrms") is not None:
-        out_s  = fmt_vrms(frame["out_vrms"])
-        in_s   = fmt_vrms(frame["in_vrms"]) if frame.get("in_vrms") is not None else "  -"
-        odbu   = f"{frame['out_dbu']:+.2f}"  if frame.get("out_dbu") is not None else "  -"
-        idbu   = f"{frame['in_dbu']:+.2f}"   if frame.get("in_dbu")  is not None else "  -"
-        gain_s = f"{frame['gain_db']:+.2f}dB" if frame.get("gain_db") is not None else "  -"
-        print(f"  {drive:>7.1f}dB  {out_s:>12}  {odbu:>8}  "
-              f"{in_s:>12}  {idbu:>8}  {gain_s:>8}  "
-              f"{thd:>9.4f}  {thdn:>9.4f}{clip}")
-    else:
-        print(f"  {drive:>7.1f}dBFS  {thd:>9.4f}  {thdn:>9.4f}")
-
 
 def _print_freq_row(frame):
     freq  = frame.get("freq_hz", frame.get("fundamental_hz", 0))
