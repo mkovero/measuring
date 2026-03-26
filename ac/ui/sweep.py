@@ -86,6 +86,7 @@ class SweepView(QtWidgets.QMainWindow):
             pos=0, angle=0,
             pen=pg.mkPen("#444444", width=1, style=QtCore.Qt.PenStyle.DashLine))
         self._p_gain.addItem(self._gain_ref)
+        self._p_gain.getAxis("left").enableAutoSIPrefix(False)
 
         glw.nextRow()
 
@@ -227,18 +228,35 @@ class SweepView(QtWidgets.QMainWindow):
         if f0:
             self._spec_harmonic_lines = add_harmonic_markers(self._p_spec, f0, sr)
 
-        # Readout
-        thd  = pt.get("thd_pct",  0.0)
-        thdn = pt.get("thdn_pct", 0.0)
+        # Readout — all numerical values for the selected point
+        thd      = pt.get("thd_pct",  0.0)
+        thdn     = pt.get("thdn_pct", 0.0)
+        gain     = pt.get("gain_db")
+        fund_dbfs = pt.get("fundamental_dbfs")
+        in_dbu   = pt.get("in_dbu")
+        out_dbu  = pt.get("out_dbu")
+        noise    = pt.get("noise_floor_dbfs")
+
         if self._is_freq:
             freq_hz = pt.get("freq_hz", pt.get("fundamental_hz", 0))
             x_label = f"{freq_hz:.0f} Hz"
         else:
-            out_dbu = pt.get("out_dbu")
             x_label = f"{out_dbu:+.2f} dBu" if out_dbu is not None else f"{pt.get('drive_db',0):.1f} dBFS"
-        self._readout.setText(
-            f"  Selected: {x_label}   THD: {thd:.4f}%   THD+N: {thdn:.4f}%"
-        )
+
+        parts = [f"  {x_label}"]
+        parts.append(f"THD: {thd:.4f}%")
+        parts.append(f"THD+N: {thdn:.4f}%")
+        if gain is not None:
+            parts.append(f"Gain: {gain:+.3f} dB")
+        if fund_dbfs is not None:
+            parts.append(f"Fund: {fund_dbfs:.1f} dBFS")
+        if in_dbu is not None:
+            parts.append(f"In: {in_dbu:+.2f} dBu")
+        if out_dbu is not None:
+            parts.append(f"Out: {out_dbu:+.2f} dBu")
+        if noise is not None:
+            parts.append(f"Noise: {noise:.1f} dBFS")
+        self._readout.setText("   ".join(parts))
 
     # ------------------------------------------------------------------
     # Keyboard shortcuts
