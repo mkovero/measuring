@@ -24,7 +24,7 @@ class TestResult:
         self.tolerance = tolerance
 
     def to_dict(self):
-        return {"name": self.name, "pass": self.passed,
+        return {"name": self.name, "pass": bool(self.passed),
                 "detail": self.detail, "tolerance": self.tolerance}
 
 
