@@ -7,13 +7,25 @@ python -m pytest tests/ -q
 
 No JACK daemon or audio hardware required — tests use `FakeJackEngine` (synthetic sine + 1% 2nd harmonic) with a real ZMQ server in a daemon thread.
 
+## Built-in self-tests
+
+In addition to pytest, `ac` has built-in self-tests runnable without pytest:
+
+```bash
+ac test software              # validates analysis pipeline + conversions (no hardware)
+ac test hardware              # hardware validation (requires 2 loopback pairs)
+ac test hardware dmm          # + cross-check against DMM over SCPI
+```
+
+Short forms: `ac te so`, `ac te h`, `ac te h dmm`
+
 ## Test files
 
 | File | Tests | What it covers |
 |------|-------|----------------|
 | `test_analysis.py` | 28 | FFT analysis: THD, THD+N, harmonics, noise floor, fundamental detection, spectrum downsampling |
-| `test_parse.py` | 47 | CLI token parser: all commands, abbreviations, defaults, error cases |
-| `test_server_client.py` | 24 | ZMQ integration: command dispatch, sweep/plot/monitor/generate workers, busy guard, stop |
+| `test_parse.py` | 53 | CLI token parser: all commands incl. test, abbreviations, defaults, error cases |
+| `test_server_client.py` | 25 | ZMQ integration: command dispatch, sweep/plot/monitor/generate workers, busy guard, stop, software self-tests |
 | `test_calibration.py` | 14 | Calibration class: save/load, vrms conversions, uncalibrated None handling |
 | `test_conversions.py` | 11 | Unit conversions: dBu/Vrms/dBFS/Vpp, known audio standards |
 
@@ -98,7 +110,31 @@ Tests use synthetic float32 sine waves, not real audio. The engine doesn't simul
 - Real noise floors
 - Sample rate drift
 
-Integration tests verify the software pipeline is correct; hardware validation requires real equipment.
+Integration tests verify the software pipeline is correct; hardware validation requires real equipment — use `ac test hardware`.
+
+## Hardware validation (`ac test hardware`)
+
+Requires two loopback pairs: `output_channel` → `input_channel` (pair A) and `output_channel` → `reference_channel` (pair B). Configure with `ac setup output N input N reference M`.
+
+| Test | What it measures | Pass criteria |
+|------|-----------------|---------------|
+| Noise floor | RMS level with silence on both inputs | < -80 dBFS |
+| Level linearity | -60 to 0 dBFS in 6 dB steps, check monotonicity | monotonic, step error < 1 dB |
+| THD floor | THD at 1 kHz across levels (-40 to -3 dBFS) | best THD < 0.05% |
+| Frequency response | Tone at 20–20kHz, deviation from 1 kHz ref | < 1.0 dB |
+| Channel match | Same stimulus on both inputs, compare levels and THD | level delta < 0.5 dB, THD delta < 0.01% |
+| Channel isolation | Tone on output, measure on reference input | < -60 dBFS |
+| Repeatability | Same measurement 5x, check variance | level sigma < 0.05 dB, THD sigma < 0.005% |
+
+### DMM cross-check (`ac test hardware dmm`)
+
+Requires `ac setup dmm <ip>` and calibration (`ac calibrate`).
+
+| Test | What it measures | Pass criteria |
+|------|-----------------|---------------|
+| Absolute level | -10 dBFS vs DMM Vrms vs calibration prediction | < 1% error |
+| Level tracking | Sweep -40 to 0 dBFS, DMM vs predicted at each step | < 2% error |
+| Freq response | Same level at 100–20kHz, check DMM reads flat | < 1.0 dB deviation |
 
 ## Adding tests
 

@@ -365,3 +365,40 @@ def test_plot_level_bare_numbers_default_dbfs():
     assert r["cmd"]   == "plot_level"
     assert r["start"] == ("dbfs", -40.0)
     assert r["stop"]  == ("dbfs",   0.0)
+
+
+# ---------------------------------------------------------------------------
+# test
+# ---------------------------------------------------------------------------
+
+def test_test_software():
+    r = parse(["test", "software"])
+    assert r["cmd"] == "test_software"
+
+
+def test_test_software_abbreviation():
+    r = parse(["te", "so"])
+    assert r["cmd"] == "test_software"
+
+
+def test_test_hardware():
+    r = parse(["test", "hardware"])
+    assert r["cmd"] == "test_hardware"
+    assert r["dmm"] is False
+
+
+def test_test_hardware_dmm():
+    r = parse(["test", "hardware", "dmm"])
+    assert r["cmd"] == "test_hardware"
+    assert r["dmm"] is True
+
+
+def test_test_hardware_abbreviation():
+    r = parse(["te", "h"])
+    assert r["cmd"] == "test_hardware"
+
+
+def test_test_hardware_dmm_abbreviation():
+    r = parse(["te", "hw", "dmm"])
+    assert r["cmd"] == "test_hardware"
+    assert r["dmm"] is True

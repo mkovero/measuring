@@ -1489,6 +1489,109 @@ def cmd_gpio(cmd, cfg, client):
 
 
 # ---------------------------------------------------------------------------
+# Test
+# ---------------------------------------------------------------------------
+
+def cmd_test_software(_cmd, cfg):
+    """Run software self-tests — no hardware, no server needed."""
+    from ..test import run_software_tests
+    print("\n  Software validation\n")
+    n_pass = 0
+    n_total = 0
+    for result in run_software_tests():
+        n_total += 1
+        tag = "PASS" if result.passed else "FAIL"
+        name = result.name.ljust(28, " " if result.passed else ".")
+        dots = "." * max(1, 28 - len(result.name)) if result.passed else ""
+        line = f"  {result.name} {dots} {result.detail}"
+        # Right-align the tag
+        pad = max(1, 72 - len(line))
+        print(f"{line}{' ' * pad}{tag}")
+        if result.passed:
+            n_pass += 1
+
+    print(f"\n  {n_pass}/{n_total} passed", end="")
+    if n_pass == n_total:
+        print("  ALL PASS")
+    else:
+        print(f"  ({n_total - n_pass} FAILED)")
+    print()
+
+
+def cmd_test_hardware(cmd, cfg, client):
+    """Run hardware validation tests via server."""
+    ack = _check_ack(client.send_cmd({
+        "cmd": "test_hardware",
+        "dmm": cmd.get("dmm", False),
+    }, timeout_ms=10000), "test_hardware")
+
+    out_port = ack.get("out_port", "?")
+    in_port  = ack.get("in_port", "?")
+    ref_port = ack.get("ref_port", "?")
+
+    print(f"\n  Hardware validation")
+    print(f"  Pair A: {out_port} -> {in_port}")
+    print(f"  Pair B: {out_port} -> {ref_port}")
+    if cmd.get("dmm"):
+        print(f"  DMM:    {cfg.get('dmm_host', '(not configured)')}")
+    print()
+
+    hw_pass = 0
+    hw_total = 0
+    dmm_pass = 0
+    dmm_total = 0
+
+    try:
+        while True:
+            topic, frame = client.recv_data(timeout_ms=300000)
+            if topic == "data" and frame.get("type") == "test_result":
+                is_dmm = frame.get("dmm", False)
+                passed = frame["pass"]
+                name = frame["name"]
+                detail = frame["detail"]
+                tolerance = frame.get("tolerance", "")
+                tag = "PASS" if passed else "FAIL"
+
+                if is_dmm:
+                    dmm_total += 1
+                    if passed:
+                        dmm_pass += 1
+                else:
+                    hw_total += 1
+                    if passed:
+                        hw_pass += 1
+
+                dots = "." * max(1, 26 - len(name))
+                line = f"  {name} {dots} {detail}"
+                pad = max(1, 78 - len(line))
+                print(f"{line}{' ' * pad}{tag}")
+
+            elif topic == "done":
+                xr = frame.get("xruns", 0)
+                xr_s = f"  !! {xr} xrun(s)" if xr else ""
+                print(f"\n  {hw_pass}/{hw_total} hardware", end="")
+                if dmm_total:
+                    print(f"  {dmm_pass}/{dmm_total} DMM", end="")
+                if hw_pass == hw_total and dmm_pass == dmm_total:
+                    print(f"  ALL PASS{xr_s}")
+                else:
+                    n_fail = (hw_total - hw_pass) + (dmm_total - dmm_pass)
+                    print(f"  ({n_fail} FAILED){xr_s}")
+                print()
+                return
+
+            elif topic == "error":
+                print(f"\n  error: {frame.get('message')}")
+                return
+
+    except TimeoutError:
+        print("\n  error: timeout waiting for test results")
+    except KeyboardInterrupt:
+        client.send_cmd({"cmd": "stop"})
+        print("\n  Stopped.")
+
+
+# ---------------------------------------------------------------------------
 # Dispatch table
 # ---------------------------------------------------------------------------
 
@@ -1511,6 +1614,7 @@ HANDLERS = {
     "server_disable":     cmd_server_disable,
     "server_connections": cmd_server_connections,
     "probe":              cmd_probe,
+    "test_hardware":      cmd_test_hardware,
     "gpio":               cmd_gpio,
 }
 
@@ -1541,6 +1645,10 @@ def main():
         save_config({"server_host": host})
         print(f"  Server host set to: {host}")
         print(f"  All ac commands will now route through tcp://{host}:{CTRL_PORT}")
+        return
+
+    if cmd["cmd"] == "test_software":
+        cmd_test_software(cmd, cfg)
         return
 
     SESSION_CMDS = {

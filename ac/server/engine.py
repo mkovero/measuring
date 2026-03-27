@@ -31,7 +31,7 @@ DATA_PORT  = 5557
 # Concurrency classification
 OUTPUT_CMDS = {"generate", "generate_pink", "sweep_level", "sweep_frequency"}
 INPUT_CMDS  = {"monitor_spectrum"}
-EXCLUSIVE   = {"plot", "plot_level", "calibrate", "transfer", "probe"}
+EXCLUSIVE   = {"plot", "plot_level", "calibrate", "transfer", "probe", "test_hardware"}
 AUDIO_CMDS  = OUTPUT_CMDS | INPUT_CMDS | EXCLUSIVE
 
 
@@ -451,6 +451,100 @@ def _worker_probe(pub_q, stop_ev, cfg, cmd):
             engine.stop()
 
 
+def _worker_test_hardware(pub_q, stop_ev, cfg, cmd):
+    """Hardware validation: noise floor, linearity, THD, freq response, channel match."""
+    from ..test import (run_noise_floor, run_level_linearity, run_thd_floor,
+                        run_freq_response, run_channel_match, run_channel_isolation,
+                        run_repeatability, run_dmm_absolute, run_dmm_tracking,
+                        run_dmm_freq_response)
+
+    out_port   = cmd["_out_port"]
+    in_port_a  = cmd["_in_port"]
+    in_port_b  = cmd["_ref_port"]
+    dmm_mode   = cmd.get("dmm", False)
+    dmm_host   = cfg.get("dmm_host")
+
+    engine = None
+    try:
+        engine = JackEngine(client_name="ac-test")
+        engine.start(output_ports=out_port, input_port=in_port_a)
+
+        tests_run = 0
+        tests_pass = 0
+
+        def _emit(result):
+            nonlocal tests_run, tests_pass
+            tests_run += 1
+            if result.passed:
+                tests_pass += 1
+            _pub(pub_q, "data", {"type": "test_result", "cmd": "test_hardware",
+                                  **result.to_dict()})
+
+        # 1. Noise floor
+        if not stop_ev.is_set():
+            _emit(run_noise_floor(engine, in_port_a, in_port_b))
+
+        # 2. Level linearity
+        if not stop_ev.is_set():
+            _emit(run_level_linearity(engine, out_port, in_port_a))
+
+        # 3. THD floor
+        if not stop_ev.is_set():
+            result, _thd_data = run_thd_floor(engine, out_port, in_port_a)
+            _emit(result)
+
+        # 4. Frequency response
+        if not stop_ev.is_set():
+            _emit(run_freq_response(engine, out_port, in_port_a))
+
+        # 5. Channel match
+        if not stop_ev.is_set():
+            _emit(run_channel_match(engine, out_port, in_port_a, in_port_b))
+
+        # 6. Channel isolation (tone on out, measure on B which is looped to same out)
+        # Only meaningful if B is on a different output — skip if same output feeds both
+        # For now, always run — if B is looped to the same output, it will show signal (expected)
+        if not stop_ev.is_set():
+            _emit(run_channel_isolation(engine, out_port, in_port_b))
+
+        # 7. Repeatability
+        if not stop_ev.is_set():
+            _emit(run_repeatability(engine, out_port, in_port_a))
+
+        # DMM tests
+        dmm_run = 0
+        dmm_pass = 0
+        if dmm_mode and dmm_host and not stop_ev.is_set():
+            cal = Calibration.load(output_channel=cfg["output_channel"],
+                                   input_channel=cfg["input_channel"])
+
+            def _emit_dmm(result):
+                nonlocal dmm_run, dmm_pass
+                dmm_run += 1
+                if result.passed:
+                    dmm_pass += 1
+                _pub(pub_q, "data", {"type": "test_result", "cmd": "test_hardware",
+                                      "dmm": True, **result.to_dict()})
+
+            if not stop_ev.is_set():
+                _emit_dmm(run_dmm_absolute(engine, out_port, dmm_host, cal))
+            if not stop_ev.is_set():
+                _emit_dmm(run_dmm_tracking(engine, out_port, dmm_host, cal))
+            if not stop_ev.is_set():
+                _emit_dmm(run_dmm_freq_response(engine, out_port, dmm_host))
+
+        _pub(pub_q, "done", {"cmd": "test_hardware",
+                             "tests_run": tests_run, "tests_pass": tests_pass,
+                             "dmm_run": dmm_run, "dmm_pass": dmm_pass,
+                             "xruns": engine.xruns})
+    except Exception as e:
+        _pub(pub_q, "error", {"cmd": "test_hardware", "message": str(e)})
+    finally:
+        if engine is not None:
+            engine.set_silence()
+            engine.stop()
+
+
 def _worker_transfer(pub_q, stop_ev, cfg, cmd):
     """H1 transfer function measurement."""
     from .transfer import h1_estimate, capture_duration
@@ -861,6 +955,23 @@ def run_server(ctrl_port=CTRL_PORT, data_port=DATA_PORT):
                 return {"ok": False, "error": f"port error: {e}"}
             cmd["_out_ports"] = out_ports
 
+        if name == "test_hardware":
+            ref_ch = cfg.get("reference_channel")
+            if ref_ch is None:
+                return {"ok": False,
+                        "error": "reference channel not configured — "
+                                 "run: ac setup reference <port>  (second loopback input)"}
+            try:
+                playback, capture = find_ports()
+                out_port = resolve_port(playback, cfg.get("output_port"), cfg["output_channel"])
+                in_port  = resolve_port(capture,  cfg.get("input_port"),  cfg["input_channel"])
+                ref_port = resolve_port(capture,  cfg.get("reference_port"), ref_ch)
+            except Exception as e:
+                return {"ok": False, "error": f"port error: {e}"}
+            cmd["_out_port"]  = out_port
+            cmd["_in_port"]   = in_port
+            cmd["_ref_port"]  = ref_port
+
         if name == "probe":
             try:
                 playback, capture = find_ports()
@@ -912,6 +1023,13 @@ def run_server(ctrl_port=CTRL_PORT, data_port=DATA_PORT):
             return {"ok": True,
                     "n_playback": len(cmd["_playback"]),
                     "n_capture":  len(cmd["_capture"])}
+
+        if name == "test_hardware":
+            _spawn("test_hardware", _worker_test_hardware, pub_q, cfg, cmd)
+            return {"ok": True,
+                    "out_port": cmd["_out_port"],
+                    "in_port": cmd["_in_port"],
+                    "ref_port": cmd["_ref_port"]}
 
         if name == "calibrate":
             # Drain stale cal_q entries from previous stop commands

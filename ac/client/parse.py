@@ -152,6 +152,7 @@ ABBREVS = {
     "c": "calibrate", "cal": "calibrate",
     "p": "plot", "pl": "plot",
     "pr": "probe",
+    "te": "test", "tst": "test",
     "ser": "server",
     # session verbs
     "n": "new",
@@ -164,6 +165,9 @@ ABBREVS = {
     # generate nouns
     "si": "sine",
     "pk": "pink",
+    # test nouns
+    "so": "software", "soft": "software",
+    "h": "hardware", "hw": "hardware",
     # show plot after command
     "sh": "show",
     # sessions
@@ -508,6 +512,25 @@ def parse(argv):
             raise ParseError(f"diff: unexpected extra args: {args}")
         return {"cmd": "session_diff", "name_a": name_a, "name_b": name_b}
 
+    elif verb == "test":
+        if not args:
+            raise ParseError("test needs a noun: software | hardware")
+        noun = _expand(args.pop(0))
+        if noun == "software":
+            if args:
+                raise ParseError(f"test software: unexpected argument(s): {args}")
+            return {"cmd": "test_software"}
+        elif noun == "hardware":
+            dmm = False
+            if args and _expand(args[0]) == "dmm":
+                args.pop(0)
+                dmm = True
+            if args:
+                raise ParseError(f"test hardware: unexpected argument(s): {args}")
+            return {"cmd": "test_hardware", "dmm": dmm}
+        else:
+            raise ParseError(f"unknown test noun: {noun!r}  (software | hardware)")
+
     elif verb == "probe":
         if args:
             raise ParseError(f"probe: unexpected argument(s): {args}")
@@ -542,6 +565,8 @@ Commands:
   transfer        [<freqStart freqStop>] [level]                H1 transfer function (requires reference)
   monitor         [<freqStart freqStop>] [interval] [show]      live spectrum
   stop                                                          stop active generator/measurement
+  test software                                                  validate analysis pipeline (no hardware)
+  test hardware   [dmm]                                          hardware validation (requires 2 loopbacks)
   probe                                                         auto-detect analog ports and loopback pairs
   dmm                                                           read AC Vrms from configured DMM over SCPI
   setup           [output <N>] [input <N>] [reference <N>]
@@ -551,8 +576,8 @@ Commands:
 Units:  20hz 1khz  |  0dbu -12dbfs 775mvrms 1vrms  |  1s  |  10ppd
         append "show" to open pyqtgraph window
 
-Short forms:  s(weep) m(onitor) g(enerate) c(alibrate) p(lot) tf/tr(ansfer) pr(obe)
-              l(evel) f(requency) si(ne) pk(ink) sh(ow)
+Short forms:  s(weep) m(onitor) g(enerate) c(alibrate) p(lot) tf/tr(ansfer) pr(obe) te(st)
+              l(evel) f(requency) si(ne) pk(ink) sh(ow) so(ftware) h(ardware)
               se(tup) d(evices) st(op) ref(erence)
 
 Sessions:

@@ -497,6 +497,16 @@ def test_plot_level_thd_numerical_accuracy(server_client):
     assert f["drive_db"] == pytest.approx(-20.0)
 
 
+def test_software_self_tests():
+    """ac test software: all built-in software tests must pass."""
+    from ac.test import run_software_tests
+    failures = []
+    for result in run_software_tests():
+        if not result.passed:
+            failures.append(f"{result.name}: {result.detail}")
+    assert not failures, f"Software self-tests failed: {failures}"
+
+
 def test_monitor_spectrum_frames(server_client):
     """Spectrum monitor should stream spectrum frames."""
     client = server_client
